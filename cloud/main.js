@@ -574,13 +574,13 @@ Parse.Cloud.define('move_funds', function(request, response) {
             'toAddress' : brokerAddress,
             'amount' : parseFloat(brokerTotal.toFixed(7))
           }
-          Parse.Cloud.run("bfx_address", {
-            success: function (address) {
-                var bfxAddress = address.result.address;
-                var bfxWithdraw = {
-                  'toAddress' : bfxAddress,
-                  'amount' : parseFloat(bfxTotal.toFixed(7))
-                }
+            Parse.Cloud.run("bfx_address", {
+              success: function (address) {
+                  var bfxAddress = address.result.address;
+                  var bfxWithdraw = {
+                    'toAddress' : bfxAddress,
+                    'amount' : parseFloat(bfxTotal.toFixed(7))
+                  }
                   console.log('got broker deposit address');
                   Parse.Cloud.run("blockio_withdraw", brokerWithdraw, {
                     success: function (withdraw) {
@@ -611,10 +611,10 @@ Parse.Cloud.define('move_funds', function(request, response) {
                           console.log("error is here: " + error);
                         }
                       });
-                },
-              error: function (error) {
-                    response.error('error saving assets: '+error.message);
-                  }
+                  },
+                error: function (error) {
+                      response.error('error saving assets: '+error.message);
+                    }
               });
             },
             error: function (error) {
