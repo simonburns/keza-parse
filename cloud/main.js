@@ -590,10 +590,11 @@ Parse.Cloud.define('move_funds', function(request, response) {
                   asset.set('outTransaction', transaction);
                 };
               });
-
               Parse.Cloud.run("blockio_withdraw", brokerWithdraw, {
                 success: function (withdraw) {
+                  console.log("withdraw details are :" + withdraw);
                 }, error: function (error) {
+                  console.log("error is " + error);
                 }
               });
               Parse.Object.saveAll(assets, {
