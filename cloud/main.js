@@ -591,29 +591,27 @@ Parse.Cloud.define('move_funds', function(request, response) {
             'toAddress' : brokerAddress,
             'amount' : parseFloat(brokerTotal.toFixed(7))
           }
-            Parse.Cloud.run("bfx_address", {
-              success: function (address) {
-                  var bfxAddress = address.result.address;
-                  var bfxWithdraw = {
-                    'toAddress' : bfxAddress,
-                    'amount' : parseFloat(bfxTotal.toFixed(7))
-                  }
-                  console.log('got broker deposit address');
-                  Parse.Cloud.run("blockio_withdraw", brokerWithdraw, {
-                    success: function (withdraw) {
-                      var transaction = withdraw['transaction'];
+          Parse.Cloud.run('bfx_address', {
+            success: function (address) {
+              var bfxAddress = address.result.address;
+              var bfxWithdraw = {
+                'toAddress' : bfxAddress,
+                'amount' : parseFloat(bfxTotal.toFixed(7))
+              }
+              console.log('got broker deposit address');
+              Parse.Cloud.run('blockio_withdraw', brokerWithdraw, {
+                success: function (brokerWithdrawSuccess) {
+                  var brokerTransaction = brokerWithdrawSuccess['transaction'];
+                  Parse.Cloud.run('blockio_withdraw', bfxWithdraw, {
+                    success: function (bfxWithdrawSuccess) {
+                      var bfxTransaction = bfxWithdrawSuccess['transaction'];
                       assets.forEach(function (asset, index) {
                         var assetSymbol = asset.get('symbol');
                         if (assetSymbol != 'BTCJ') {
-                          asset.set('outTransaction', transaction);
+                          asset.set('outTransaction', brokerTransaction);
+                        } else {
+                          asset.set('outTransaction', bfxTransaction);
                         };
-                      });
-                      Parse.Cloud.run("blockio_withdraw", bfxWithdraw, {
-                        success: function (withdraw) {
-                          console.log("withdraw details are :" + withdraw);
-                        }, error: function (error) {
-                          console.log("error is " + error);
-                        }
                       });
                       Parse.Object.saveAll(assets, {
                         success: function (savedAssets) {
@@ -625,16 +623,22 @@ Parse.Cloud.define('move_funds', function(request, response) {
                           });
                         },
                         error: function (error) {
-                          console.log("error is here: " + error);
+                          console.log('error saving assets: ' + error.message);
                         }
                       });
-                  },
+                    }, error: function (error) {
+                      console.log('error withdrawing to bitfinex');
+                    }
+                  });
+                },
                 error: function (error) {
-                  response.error('error saving assets: '+error.message);
+                  console.log('error withdrawing to broker');
+                  response.error(error);
                 }
               });
             },
             error: function (error) {
+              console.log('error getting bfx address');
               response.error(error);
             }
           });
@@ -642,7 +646,10 @@ Parse.Cloud.define('move_funds', function(request, response) {
           response.error('error getting broker address: '+error.code+' '+error.message);
         }
       });
+    }, error: function (error) {
+      response.error('error querying assets: '+error.code+' '+error.message);
     }
+  });
 });
 
 // Looks for unpriced assets, and fills in with latest quote. Also produces total to pass forward
@@ -722,100 +729,108 @@ Parse.Cloud.define('place_orders', function(request, response) {
   var assetTotals = {};
   var transactionId = request.params['transactionId'];
   var TransactionClass = Parse.Object.extend('Transaction');
-  var transaction = new TransactionClass();
-  transaction.id = transactionId;
-  var AssetClass = Parse.Object.extend('Asset');
-  var assetQuery = new Parse.Query(AssetClass);
-  assetQuery.equalTo('outTransaction', transaction);
-  assetQuery.equalTo('complete', false);
-  assetQuery.find({
-    success: function (assets) {
-      assets.forEach(function (asset, index) {
-        var symbol = asset.get('symbol');
-        var margin = asset.get('amount');
-        if (!(assetTotals.hasOwnProperty(symbol))) {
-          assetTotals[symbol] = margin;
-        } else {
-          assetTotals[symbol] = assetTotals[symbol] + margin;
-        };
-      });
-      var finishedCount = 0;  //  Keep track of finished order attempts
-      var orderIds = [];
-      var orderSymbols = [];
-      for (var totalSymbol in assetTotals) {
-        var margin = assetTotals[totalSymbol];
-        Parse.Cloud.httpRequest({
-          url: 'https://1broker.com/api/v1/order/create.php?symbol='+totalSymbol+'&margin='+margin+'&direction=long&leverage=1&order_type=Market&token='+brokerToken+'&pretty=1',
-          success: function (orderResponse) {
-            if (JSON.parse(orderResponse.text)["error"] != true) {
-              var orderId = orderResponse.data.response.order_id;
-              var orderSymbol = orderResponse.data.response.symbol;
-              orderIds.push(orderId);
-              orderSymbols.push(orderSymbol);
-              assets.forEach(function (asset, index) {
-                var assetSymbol = asset.get('symbol');
-                if (orderSymbol == assetSymbol) {
-                  asset.set('complete', true);
-                  asset.set('orderId', orderId);
-                };
-              });
-              finishedCount = finishedCount + 1;
-              if (finishedCount == Object.keys(assetTotals).length) {
-                Parse.Object.saveAll(assets, {
-                  success: function (savedAssets) {
-                    response.success({
-                      'assetTotals' : assetTotals,
-                      'finishedCount' : finishedCount,
-                      'orderIds' : orderIds,
-                      'orderSymbols' : orderSymbols
-                    });
-                  },
-                  error: function (assetSaveError) {
-                    response.error('error saving assets: '+assetSaveError.message);
-                  }
-                });
-              };
+  // var transaction = new TransactionClass();
+  var transactionQuery = new Parse.Query(TransactionClass);
+  transactionQuery.equalTo('objectId', transactionId);
+  transactionQuery.first({
+    success: function (transaction) {
+      var AssetClass = Parse.Object.extend('Asset');
+      var assetQuery = new Parse.Query(AssetClass);
+      // assetQuery.equalTo('outTransaction', transaction);
+      assetQuery.equalTo('complete', false);
+      assetQuery.notEqualTo('symbol', 'BTCJ');
+      assetQuery.find({
+        success: function (assets) {
+          assets.forEach(function (asset, index) {
+            var symbol = asset.get('symbol');
+            var margin = asset.get('amount');
+            if (!(assetTotals.hasOwnProperty(symbol))) {
+              assetTotals[symbol] = margin;
             } else {
-              console.log('ooops: '+orderResponse.text);
-              finishedCount = finishedCount + 1;
-              if (finishedCount == Object.keys(assetTotals).length) {
-                Parse.Object.saveAll(assets, {
-                  success: function (savedAssets) {
-                    response.success({
-                      'assetTotals' : assetTotals,
-                      'finishedCount' : finishedCount,
-                      'orderIds' : orderIds,
-                      'orderError' : JSON.parse(orderResponse.text)
-                    });
-                  },
-                  error: function (assetSaveError) {
-                    response.error('error saving assets: '+assetSaveError.message);
-                  }
-                });
-              };
+              assetTotals[symbol] = assetTotals[symbol] + margin;
             };
-          }, error: function (orderError) {
-            finishedCount = finishedCount + 1;
-            if (finishedCount == Object.keys(assetTotals).length) {
-              Parse.Object.saveAll(assets, {
-                success: function (savedAssets) {
-                  response.success({
-                    'assetTotals' : assetTotals,
-                    'finishedCount' : finishedCount,
-                    'orderIds' : orderIds,
-                    'orderError' : orderError
+          });
+          var finishedCount = 0;  //  Keep track of finished order attempts
+          var orderIds = [];
+          var orderSymbols = [];
+          for (var totalSymbol in assetTotals) {
+            var margin = assetTotals[totalSymbol];
+            Parse.Cloud.httpRequest({
+              url: 'https://1broker.com/api/v1/order/create.php?symbol='+totalSymbol+'&margin='+margin+'&direction=long&leverage=1&order_type=Market&token='+brokerToken+'&pretty=1',
+              success: function (orderResponse) {
+                if (JSON.parse(orderResponse.text)["error"] != true) {
+                  var orderId = orderResponse.data.response.order_id;
+                  var orderSymbol = orderResponse.data.response.symbol;
+                  orderIds.push(orderId);
+                  orderSymbols.push(orderSymbol);
+                  assets.forEach(function (asset, index) {
+                    var assetSymbol = asset.get('symbol');
+                    if (orderSymbol == assetSymbol) {
+                      asset.set('complete', true);
+                      asset.set('orderId', orderId);
+                    };
                   });
-                },
-                error: function (assetSaveError) {
-                  response.error('error saving assets: '+assetSaveError.message);
-                }
-              });
-            };
+                  finishedCount = finishedCount + 1;
+                  if (finishedCount == Object.keys(assetTotals).length) {
+                    Parse.Object.saveAll(assets, {
+                      success: function (savedAssets) {
+                        response.success({
+                          'assetTotals' : assetTotals,
+                          'finishedCount' : finishedCount,
+                          'orderIds' : orderIds,
+                          'orderSymbols' : orderSymbols
+                        });
+                      },
+                      error: function (assetSaveError) {
+                        response.error('error saving assets: '+assetSaveError.message);
+                      }
+                    });
+                  };
+                } else {
+                  console.log('ooops: '+orderResponse.text);
+                  finishedCount = finishedCount + 1;
+                  if (finishedCount == Object.keys(assetTotals).length) {
+                    Parse.Object.saveAll(assets, {
+                      success: function (savedAssets) {
+                        response.success({
+                          'assetTotals' : assetTotals,
+                          'finishedCount' : finishedCount,
+                          'orderIds' : orderIds,
+                          'orderError' : JSON.parse(orderResponse.text)
+                        });
+                      },
+                      error: function (assetSaveError) {
+                        response.error('error saving assets: '+assetSaveError.message);
+                      }
+                    });
+                  };
+                };
+              }, error: function (orderError) {
+                finishedCount = finishedCount + 1;
+                if (finishedCount == Object.keys(assetTotals).length) {
+                  Parse.Object.saveAll(assets, {
+                    success: function (savedAssets) {
+                      response.success({
+                        'assetTotals' : assetTotals,
+                        'finishedCount' : finishedCount,
+                        'orderIds' : orderIds,
+                        'orderError' : orderError
+                      });
+                    },
+                    error: function (assetSaveError) {
+                      response.error('error saving assets: '+assetSaveError.message);
+                    }
+                  });
+                };
+              }
+            });
           }
-        });
-      }
-    }, error: function (assetQueryError) {
-      response.error('error querying assets: '+assetQueryError.code+' '+assetQueryError.message);
+        }, error: function (assetQueryError) {
+          response.error('error querying assets: '+assetQueryError.code+' '+assetQueryError.message);
+        }
+      });
+    }, error: function(error) {
+      response.error('error querying transaction: '+assetQueryError.code+' '+assetQueryError.message);
     }
   });
 });
@@ -1290,9 +1305,129 @@ Parse.Cloud.define('sum_assets', function(request, response) {
   });
 });
 
+Parse.Cloud.define('blockio_update_transactions', function(request, response) {
+  Parse.Cloud.httpRequest({
+    url: 'https://block.io/api/v2/get_transactions/?api_key='+blockApiKey+'&type=received',
+    success: function (transactionsResponse) {
+      var transactionsData = JSON.parse(transactionsResponse.text);
+      // response.success(transactionsData.data);
+      var transactions = transactionsData.data.txs;
+      var senders = [];
+      transactions.forEach(function(transaction, index) {
+        var sender = transaction.senders[0];
+        senders.push(sender);
+      });
+      // /api/v2/get_transactions/?api_key=API KEY&type=received&before_tx=TXID
+
+      // Parse.Cloud.httpRequest({
+      //   url: 'https://block.io/api/v2/get_notifications/?api_key='+blockApiKey,
+      //   success: function (notificationsResponse) {
+      //     var notificationsData = JSON.parse(notificationsResponse.text);
+      //     var notifications = notificationsData.data;
+      //     var completedNotifications = 0;
+      //     var errors = [];
+      //     var deletes = 0;
+      //     notifications.forEach(function(notification, index) {
+      //
 
 
+      response.success({
+        'senders' : senders,
+        'transactions' : transactions.length
+      });
+    }, error: function (error) {
+      response.error('error getting transactions: '+error.code+' '+error.message);
+    }
+  });
+});
 
+Parse.Cloud.define('archive_addresses', function(request, response) {
+  Parse.Cloud.useMasterKey();
+  var UserClass = Parse.Object.extend('User');
+  var userQuery = new Parse.Query(UserClass);
+  userQuery.find({
+    success: function (users) {
+      var addresses = [];
+      users.forEach(function(user, index) {
+        var address = user.get('address');
+        if (address && address.length > 0) {
+          addresses.push(address);
+        }
+      });
+      Parse.Cloud.httpRequest({
+        url: 'https://block.io/api/v2/get_my_addresses/?api_key='+blockApiKey,
+        success: function (addressesResponse) {
+          var addressesData = JSON.parse(addressesResponse.text);
+          var allAddresses = addressesData.data.addresses;
+          var keepAddresses = [];
+          var deleteAddresses = [];
+          allAddresses.forEach(function(checkAddress, index) {
+            var addressAddress = checkAddress.address;
+            var balance = checkAddress.available_balance;
+            var addressIndex = addresses.indexOf(addressAddress);
+            if (addressIndex !== -1 || balance > 0) {
+              keepAddresses.push(addressAddress);
+            } else {
+              deleteAddresses.push(addressAddress);
+            }
+          });
+
+          response.success({
+            'allAddresses' : allAddresses,
+            'userAddresses' : addresses,
+            'keepAddresses' : keepAddresses,
+            'zdeleteAddresses' : deleteAddresses
+          });
+        }, error: function (error) {
+          response.error(error);
+        }
+      });
+    }, error: function (error) {
+      response.error('error getting users: '+error.code+' '+error.message);
+    }
+  });
+});
+
+Parse.Cloud.define('blockio_update_notifications', function(request, response) {
+  Parse.Cloud.useMasterKey();
+  Parse.Cloud.httpRequest({
+    url: 'https://block.io/api/v2/get_notifications/?api_key='+blockApiKey,
+    success: function (notificationsResponse) {
+      var notificationsData = JSON.parse(notificationsResponse.text);
+      var notifications = notificationsData.data;
+
+      var UserClass = Parse.Object.extend('User');
+      var userQuery = new Parse.Query(UserClass);
+      userQuery.find({
+        success: function (users) {
+          var userAddresses = [];
+          users.forEach(function(user, index) {
+            var address = user.get('address');
+            if (address && address.length > 0) {
+              userAddresses.push(address);
+            }
+          });
+          var notificationAddresses = [];
+          notifications.forEach(function(notification, index) {
+            var url = notification.url;
+            var notificationId = notification.notification_id;
+            var notificationAddress = notification.address;
+            notificationAddresses.push(notificationAddress);
+          });
+          response.success({
+            'notificationAddresses' : notificationAddresses,
+            'userAddresses' : userAddresses
+          });
+        }, error: function (error) {
+          response.error('error getting users: '+error.code+' '+error.message);
+        }
+      });
+    }, error: function (error) {
+      response.error('error getting transactions: '+error.code+' '+error.message);
+    }
+  });
+
+});
 
 Parse.Cloud.define('bfx_socket', function(request, response) {
   response.success(request);
