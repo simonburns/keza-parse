@@ -540,6 +540,7 @@ Parse.Cloud.afterSave('Transaction', function(request) {
           eventObject.save();
         } else {
           var newEvent = new EventClass();
+          var user = transaction.get('user');
           newEvent.set('transaction', transaction);
           newEvent.set('progress', progress);
           newEvent.set('type', 'deposit');
@@ -547,9 +548,28 @@ Parse.Cloud.afterSave('Transaction', function(request) {
           newEvent.set('value', value);
           newEvent.set('read', false);
           newEvent.set('alert', alert);
-          newEvent.set('user', transaction.get('user'));
+          newEvent.set('user', user);
           newEvent.save();
         };
+        var pushQuery = new Parse.Query(Parse.Installation);
+        pushQuery.equalTo('user', user);
+        Parse.Push.send({
+          where: pushQuery,
+          data: {
+            alert : {
+              'title' : name,
+              'body' : alert,
+              'type' : 'deposit'
+            }
+          }
+        }, {
+          success: function() {
+            console.log('push success: ');
+          },
+          error: function(error) {
+            console.log('push error: '+error);
+          }
+        });
       }, error: function (error) {
         console.error('error querying events: ' + error);
       }
@@ -624,10 +644,12 @@ Parse.Cloud.define('move_funds', function(request, response) {
                         },
                         error: function (error) {
                           console.log('error saving assets: ' + error.message);
+                          response.success();
                         }
                       });
                     }, error: function (error) {
                       console.log('error withdrawing to bitfinex');
+                      response.error(error);
                     }
                   });
                 },
@@ -898,14 +920,41 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
                   success: function (savedEvent) {
                     Parse.Cloud.run("set_prices", {}, {
                       success: function (setPrices) {
-                        response.success({
-                          'symbolAmounts' : symbolAmounts,
-                          'totalAmount' : totalAmount,
-                          'toAddress' : toAddress,
-                          'userId' : user.id,
-                          'transaction' : transactionId,
-                          'newAssets' : newAssets
+                        var pushQuery = new Parse.Query(Parse.Installation);
+                        pushQuery.equalTo('user', user);
+                        Parse.Push.send({
+                          where: pushQuery,
+                          data: {
+                            alert : {
+                              'title' : 'Withdrawal',
+                              'body' : 'Withdraw Complete',
+                              'type' : 'withdrawal'
+                            }
+                          }
+                        }, {
+                          success: function() {
+                            response.success({
+                              'symbolAmounts' : symbolAmounts,
+                              'totalAmount' : totalAmount,
+                              'toAddress' : toAddress,
+                              // 'userId' : user.id,
+                              'transaction' : transactionId,
+                              'newAssets' : newAssets
+                            });
+                          },
+                          error: function(error) {
+                            response.success({
+                              'symbolAmounts' : symbolAmounts,
+                              'totalAmount' : totalAmount,
+                              'toAddress' : toAddress,
+                              // 'userId' : user.id,
+                              'transaction' : transactionId,
+                              'newAssets' : newAssets,
+                              'error' : error
+                            });
+                          }
                         });
+
                       }, error: function (setPricesError) {
                         response.error('error setting prices: '+setPricesError.message);
                       }
@@ -1245,9 +1294,9 @@ Parse.Cloud.define('broker_positions', function(request, response) {
 });
 
 Parse.Cloud.afterSave('Event', function(request) {
-  Parse.Cloud.useMasterKey();
-  var eventObject = request.object;
-  var user = eventObject.get('user');
+  // Parse.Cloud.useMasterKey();
+  // var eventObject = request.object;
+  // var user = eventObject.get('user');
   // var AssetClass = Parse.Object.extend('Asset');
   // var assetQuery = new Parse.Query(AssetClass);
   //
@@ -1258,25 +1307,6 @@ Parse.Cloud.afterSave('Event', function(request) {
   //
   // }
   // console.log('user: '+user.id);
-  // var pushQuery = new Parse.Query(Parse.Installation);
-  // pushQuery.equalTo('user', user);
-  // Parse.Push.send({
-  //   where: pushQuery,
-  //   data: {
-  //     alert : {
-  //       'title' : eventObject.get('name'),
-  //       'body' : eventObject.get('alert'),
-  //       'type' : eventObject.get('type')
-  //     }
-  //   }
-  // }, {
-  //   success: function() {
-  //     console.log('push success');
-  //   },
-  //   error: function(error) {
-  //     console.log('push error: '+error);
-  //   }
-  // });
 });
 
 // Not being used atm
