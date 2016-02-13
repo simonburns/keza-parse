@@ -574,39 +574,47 @@ Parse.Cloud.define('move_funds', function(request, response) {
             'toAddress' : brokerAddress,
             'amount' : parseFloat(brokerTotal.toFixed(7))
           }
-          var bfxWithdraw = {
-            'toAddress' : brokerAddress,
-            'amount' : parseFloat(bfxTotal.toFixed(7))
-          }
-          console.log('got broker deposit address');
-          Parse.Cloud.run("blockio_withdraw", brokerWithdraw, {
-            success: function (withdraw) {
-              var transaction = withdraw['transaction'];
-              assets.forEach(function (asset, index) {
-                var assetSymbol = asset.get('symbol');
-                if (assetSymbol != 'BTCJ') {
-                  asset.set('outTransaction', transaction);
-                };
-              });
-              Parse.Cloud.run("blockio_withdraw", brokerWithdraw, {
-                success: function (withdraw) {
-                  console.log("withdraw details are :" + withdraw);
-                }, error: function (error) {
-                  console.log("error is " + error);
+          Parse.Cloud.run("bfx_address", {
+            success: function (address) {
+                var bfxAddress = address.result.address;
+                var bfxWithdraw = {
+                  'toAddress' : bfxAddress,
+                  'amount' : parseFloat(bfxTotal.toFixed(7))
                 }
-              });
-              Parse.Object.saveAll(assets, {
-                success: function (savedAssets) {
-                  response.success({
-                    'transaction' : transaction,
-                    'brokerTotal' : brokerTotal,
-                    'jamTotal' : jamTotal,
-                    'assetTotals' : assetTotals
-                  });
+                  console.log('got broker deposit address');
+                  Parse.Cloud.run("blockio_withdraw", brokerWithdraw, {
+                    success: function (withdraw) {
+                      var transaction = withdraw['transaction'];
+                      assets.forEach(function (asset, index) {
+                        var assetSymbol = asset.get('symbol');
+                        if (assetSymbol != 'BTCJ') {
+                          asset.set('outTransaction', transaction);
+                        };
+                      });
+                      Parse.Cloud.run("blockio_withdraw", bfxWithdraw, {
+                        success: function (withdraw) {
+                          console.log("withdraw details are :" + withdraw);
+                        }, error: function (error) {
+                          console.log("error is " + error);
+                        }
+                      });
+                      Parse.Object.saveAll(assets, {
+                        success: function (savedAssets) {
+                          response.success({
+                            'transaction' : transaction,
+                            'brokerTotal' : brokerTotal,
+                            'jamTotal' : jamTotal,
+                            'assetTotals' : assetTotals
+                          });
+                        },
+                        error: function (error) {
+                          console.log("error is here: " + error);
+                        }
+                      });
                 },
-                error: function (error) {
-                  response.error('error saving assets: '+error.message);
-                }
+              error: function (error) {
+                    response.error('error saving assets: '+error.message);
+                  }
               });
             },
             error: function (error) {
