@@ -613,8 +613,8 @@ Parse.Cloud.define('move_funds', function(request, response) {
                       });
                   },
                 error: function (error) {
-                      response.error('error saving assets: '+error.message);
-                    }
+                  response.error('error saving assets: '+error.message);
+                }
               });
             },
             error: function (error) {
