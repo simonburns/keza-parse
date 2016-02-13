@@ -381,8 +381,11 @@ Parse.Cloud.define('tx_hook', function(request, response) {
           userQuery.equalTo('address', address);
           userQuery.first({
             success: function (user) {
+              console.log(user);
               var transaction = new TransactionClass();
-              transaction.set('user', user);
+              if (user) {
+                transaction.set('user', user);
+              }
               transaction.set('notificationId', notificationId);
               transaction.set('deliveryAttempt', deliveryAttempt);
               transaction.set('confirmations', parseFloat(confirmations));
@@ -397,7 +400,20 @@ Parse.Cloud.define('tx_hook', function(request, response) {
               transaction.save();
               response.success('saved new transaction: '+transactionId);
             }, error: function (error) {
-              response.error('error querying user: '+error.code+' '+error.message);
+              var transaction = new TransactionClass();
+              transaction.set('notificationId', notificationId);
+              transaction.set('deliveryAttempt', deliveryAttempt);
+              transaction.set('confirmations', parseFloat(confirmations));
+              transaction.set('address', address);
+              transaction.set('amountReceived', parseFloat(amountReceived));
+              transaction.set('amountSent', parseFloat(amountSent));
+              transaction.set('balanceChange', parseFloat(balanceChange));
+              transaction.set('network', network);
+              transaction.set('transactionId', transactionId);
+              transaction.set('complete', false);
+              transaction.set('sentAt', sentAt);
+              transaction.save();
+              response.success('saved new transaction (without user): '+transactionId);
             }
           });
         } else {
@@ -464,6 +480,7 @@ Parse.Cloud.define('tx_hook', function(request, response) {
               response.success('updated transaction: '+transactionId);
             };
           } else {
+            var amountWithdrawn
             if (confirmations == 3 && complete == false) {
               console.log({
                 'transaction' : transaction.id,
