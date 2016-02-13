@@ -545,7 +545,7 @@ Parse.Cloud.define('move_funds', function(request, response) {
   Parse.Cloud.useMasterKey();
   var assetTotals = {};
   var brokerTotal = 0;
-  var jamTotal = 0;
+  var bfxTotal = 0;
   var AssetClass = Parse.Object.extend('Asset');
   var assetQuery = new Parse.Query(AssetClass);
   assetQuery.doesNotExist('outTransaction');
@@ -560,7 +560,7 @@ Parse.Cloud.define('move_funds', function(request, response) {
           assetTotals[symbol] = assetTotals[symbol] + margin;
         };
         if (symbol == 'BTCJ') {
-          jamTotal += margin;
+          bfxTotal += margin;
         } else {
           brokerTotal += margin;
         };
@@ -574,6 +574,10 @@ Parse.Cloud.define('move_funds', function(request, response) {
             'toAddress' : brokerAddress,
             'amount' : parseFloat(brokerTotal.toFixed(7))
           }
+          var bfxWithdraw = {
+            'toAddress' : brokerAddress,
+            'amount' : parseFloat(bfxTotal.toFixed(7))
+          }
           console.log('got broker deposit address');
           Parse.Cloud.run("blockio_withdraw", brokerWithdraw, {
             success: function (withdraw) {
@@ -585,6 +589,12 @@ Parse.Cloud.define('move_funds', function(request, response) {
                   // run sepereate defined function
                   asset.set('outTransaction', transaction);
                 };
+              });
+
+              Parse.Cloud.run("blockio_withdraw", brokerWithdraw, {
+                success: function (withdraw) {
+                }, error: function (error) {
+                }
               });
               Parse.Object.saveAll(assets, {
                 success: function (savedAssets) {
