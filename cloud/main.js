@@ -585,8 +585,6 @@ Parse.Cloud.define('move_funds', function(request, response) {
               assets.forEach(function (asset, index) {
                 var assetSymbol = asset.get('symbol');
                 if (assetSymbol != 'BTCJ') {
-                  // if bitfinex send funds to bitfinex
-                  // run sepereate defined function
                   asset.set('outTransaction', transaction);
                 };
               });
