@@ -1,0 +1,10 @@
+{
+  "applications": {
+    "Wealthcoin Production": {
+      "applicationId": "sObeqCovKFUbZMYfpN6983oY0cWAJuaBllOx3NWT"
+    },
+    "_default": {
+      "link": "Wealthcoin Production"
+    }
+  }
+}
