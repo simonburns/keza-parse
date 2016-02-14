@@ -483,15 +483,15 @@ Parse.Cloud.define('tx_hook', function(request, response) {
             var amountWithdrawn
             if (confirmations == 3 && complete == false) {
 
-            var AssetClass = Parse.Object.extend('Asset');
-            var assetQuery = new Parse.Query(UserClass);
-              userQuery.equalTo('address', address);
-              userQuery.first({
-                success: function(asset)
-              }, error: function (error) {
-                response.error('error querying user: '+error.code+' '+error.message);
-              }
-              });
+            // var AssetClass = Parse.Object.extend('Asset');
+            // var assetQuery = new Parse.Query(UserClass);
+            //   userQuery.equalTo('address', address);
+            //   userQuery.first({
+            //     success: function(asset)
+            //   }, error: function (error) {
+            //     response.error('error querying user: '+error.code+' '+error.message);
+            //   }
+            //   });
 
 
 
@@ -548,6 +548,7 @@ Parse.Cloud.afterSave('Transaction', function(request) {
     eventQuery.equalTo('transaction', transaction);
     eventQuery.first({
       success: function (eventObject) {
+        var user = transaction.get('user');
         if (eventObject) {
           eventObject.set('progress', progress);
           eventObject.set('alert', alert);
@@ -555,7 +556,6 @@ Parse.Cloud.afterSave('Transaction', function(request) {
           eventObject.save();
         } else {
           var newEvent = new EventClass();
-          var user = transaction.get('user');
           newEvent.set('transaction', transaction);
           newEvent.set('progress', progress);
           newEvent.set('type', 'deposit');
@@ -596,7 +596,7 @@ Parse.Cloud.afterSave('Transaction', function(request) {
 
 Parse.Cloud.define('test_push', function(request, response) {
   var userQuery = new Parse.Query(Parse.User);
-  userQuery.equalTo('objectId', 'RtrbJKNP8P');
+  userQuery.equalTo('objectId', 'qT6DdHYgrA');
   var pushQuery = new Parse.Query(Parse.Installation);
   pushQuery.matchesQuery('user', userQuery);
   Parse.Push.send({
@@ -953,7 +953,7 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
         });
 
         var withdraw = {
-          'amount' : totalAmount,
+          'amount' : parseFloat(totalAmount.toFixed(7)),
           'toAddress' : toAddress
         };
         Parse.Cloud.run("coinbase_withdraw", withdraw, {
@@ -963,7 +963,7 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
             var AssetClass = Parse.Object.extend('Asset');
             symbols.forEach(function (symbol, index) {
               var asset = new AssetClass();
-              asset.set('amount', parseFloat(symbolAmounts[symbol]).toFixed(7));
+              asset.set('amount', parseFloat(symbolAmounts[symbol].toFixed(7)));
               asset.set('symbol', symbol);
               asset.set('user', user);
               asset.set('complete', false);
@@ -978,7 +978,7 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
                 newEvent.set('progress', 1);
                 newEvent.set('type', 'withdrawal');
                 newEvent.set('name', 'Withdrawal');
-                newEvent.set('value', parseFloat(-totalAmount).toFixed(7));
+                newEvent.set('value', parseFloat(-totalAmount.toFixed(7)));
                 newEvent.set('read', false);
                 newEvent.set('alert', 'Withdraw Complete');
                 newEvent.set('user', user);
@@ -1052,7 +1052,7 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
 //  request ex: {"amount":"0.055","toAddress":"A9B4W8RRwSEjhKx7cMhmJR60Rk72sKCOOqrgVVCD"}
 Parse.Cloud.define('blockio_withdraw', function(request, response) {
   Parse.Cloud.useMasterKey();
-  var amount = parseFloat(request.params['amount']).toFixed(7);
+  var amount = parseFloat(request.params['amount'].toFixed(7));
   var toAddress = request.params['toAddress'];
   console.log(amount + ', to: ' + toAddress);
   Parse.Cloud.httpRequest({
