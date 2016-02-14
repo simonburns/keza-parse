@@ -28,63 +28,74 @@ Parse.Cloud.afterSave('_User', function(request) {
         var weights = fetchedPortfolio.get('weights');
         user.set('symbols', symbols);
         user.set('weights', weights);
-        user.save();
-        Parse.Cloud.httpRequest({
-          url: 'https://block.io/api/v2/get_new_address/?api_key='+blockApiKey,
-          success: function (walletResponse) {
-            var walletData = JSON.parse(walletResponse.text);
-            var network = walletData.data.network;
-            var userId = walletData.data.user_id;
-            var address = walletData.data.address;
-            var label = walletData.data.label;
-            var WalletClass = Parse.Object.extend('Wallet');
-            var wallet = new WalletClass();
-            wallet.set('network', network);
-            wallet.set('userId', userId);
-            wallet.set('address', address);
-            wallet.set('label', label);
-            wallet.set('user', user);
-            wallet.save();
-            user.set('address', address);
-            user.set('wallet', wallet);
-            user.save();
-            console.log('got wallet: '+address);
+        user.save(null, {
+          success: function(savedUser) {
             Parse.Cloud.httpRequest({
-              url: 'https://block.io/api/v2/create_notification/?api_key='+blockApiKey+'&type=address&address='+walletData.data.address+'&url=https://'+parseAppId+':javascript-key%3D'+parseJavascriptKey+'@api.parse.com/1/functions/tx_hook',
-              success: function (notificationResponse) {
-                var notificationData = JSON.parse(notificationResponse.text);
-                var network = notificationData.data.network;
-                var notificationId = notificationData.data.notification_id;
-                var type = notificationData.data.type;
-                var enabled = notificationData.data.enabled;
-                var url = notificationData.data.url;
+              url: 'https://block.io/api/v2/get_new_address/?api_key='+blockApiKey,
+              success: function (walletResponse) {
+                var walletData = JSON.parse(walletResponse.text);
+                var network = walletData.data.network;
+                var userId = walletData.data.user_id;
+                var address = walletData.data.address;
+                var label = walletData.data.label;
+                var WalletClass = Parse.Object.extend('Wallet');
+                var wallet = new WalletClass();
                 wallet.set('network', network);
-                wallet.set('notificationId', notificationId);
-                wallet.set('type', type);
-                wallet.set('enabled', enabled);
-                wallet.set('url', url);
+                wallet.set('userId', userId);
+                wallet.set('address', address);
+                wallet.set('label', label);
                 wallet.set('user', user);
                 wallet.save();
-                var EventClass = Parse.Object.extend('Event');
-                var accountEvent = new EventClass();
-                accountEvent.set('user', user);
-                accountEvent.set('detail', user.get('email'));
-                accountEvent.set('name', 'New Account Created');
-                accountEvent.set('type', 'account');
-                accountEvent.set('read', false);
-                accountEvent.set('progress', parseFloat(1));
-                accountEvent.save();
-                console.log('added wallet notification: '+notificationId);
-                user.set('complete', true);
+                user.set('address', address);
+                user.set('wallet', wallet);
                 user.save();
+                console.log('got wallet: '+address);
+                Parse.Cloud.httpRequest({
+                  url: 'https://block.io/api/v2/create_notification/?api_key='+blockApiKey+'&type=address&address='+walletData.data.address+'&url=https://'+parseAppId+':javascript-key%3D'+parseJavascriptKey+'@api.parse.com/1/functions/tx_hook',
+                  success: function (notificationResponse) {
+                    var notificationData = JSON.parse(notificationResponse.text);
+                    var network = notificationData.data.network;
+                    var notificationId = notificationData.data.notification_id;
+                    var type = notificationData.data.type;
+                    var enabled = notificationData.data.enabled;
+                    var url = notificationData.data.url;
+                    wallet.set('network', network);
+                    wallet.set('notificationId', notificationId);
+                    wallet.set('type', type);
+                    wallet.set('enabled', enabled);
+                    wallet.set('url', url);
+                    wallet.set('user', user);
+                    wallet.save();
+                    user.set('complete', true);
+                    user.save(null, {
+                      success: function(savedUser) {
+                        var EventClass = Parse.Object.extend('Event');
+                        var accountEvent = new EventClass();
+                        accountEvent.set('user', user);
+                        accountEvent.set('detail', user.get('email'));
+                        accountEvent.set('name', 'New Account Created');
+                        accountEvent.set('type', 'account');
+                        accountEvent.set('read', false);
+                        accountEvent.set('progress', parseFloat(1));
+                        accountEvent.save();
+                        console.log('added wallet notification: '+notificationId);
+                      }, error: function(error) {
+                        console.error('error saving user '+error.text);
+                      }
+                    });
+
+                  },
+                  error: function (error) {
+                    console.error('error creating notification '+error.text);
+                  }
+                });
               },
               error: function (error) {
-                console.error('error creating notification '+error.text);
+                console.error('wallet create failed: '+error.text);
               }
             });
-          },
-          error: function (error) {
-            console.error('wallet create failed: '+error.text);
+          }, error: function(error) {
+            console.error('error saving user '+error.text);
           }
         });
       }, error: function(fetchedPortfolio, error) {
@@ -659,21 +670,27 @@ Parse.Cloud.define('move_funds', function(request, response) {
                 'toAddress' : bfxAddress,
                 'amount' : parseFloat(bfxTotal.toFixed(7))
               }
+              var brokerTransaction;
               Parse.Cloud.run('blockio_withdraw', brokerWithdraw, {
                 success: function (brokerWithdrawSuccess) {
-                  var brokerTransaction = brokerWithdrawSuccess['transaction'];
+                  brokerTransaction = brokerWithdrawSuccess['transaction'];
+                  assets.forEach(function (asset, index) {
+                    var assetSymbol = asset.get('symbol');
+                    if (assetSymbol != 'BTCJ') {
+                      asset.set('outTransaction', brokerTransaction);
+                      asset.set('type' , 'broker');
+                    }
+                  });
+                  var bfxTransaction;
                   Parse.Cloud.run('blockio_withdraw', bfxWithdraw, {
                     success: function (bfxWithdrawSuccess) {
-                      var bfxTransaction = bfxWithdrawSuccess['transaction'];
+                      bfxTransaction = bfxWithdrawSuccess['transaction'];
                       assets.forEach(function (asset, index) {
                         var assetSymbol = asset.get('symbol');
-                        if (assetSymbol != 'BTCJ') {
-                          asset.set('outTransaction', brokerTransaction);
-                          asset.set('type' , 'broker');
-                        } else {
+                        if (assetSymbol == 'BTCJ') {
                           asset.set('outTransaction', bfxTransaction);
-                          asset.set('type' , 'bfx');
-                        };
+                          asset.set('type', 'bfx');
+                        }
                       });
                       Parse.Object.saveAll(assets, {
                         success: function (savedAssets) {
@@ -695,8 +712,10 @@ Parse.Cloud.define('move_funds', function(request, response) {
                         var assetSymbol = asset.get('symbol');
                         if (assetSymbol != 'BTCJ') {
                           asset.set('outTransaction', brokerTransaction);
+                          asset.set('type' , 'broker');
                         } else {
                           asset.set('outTransaction', bfxTransaction);
+                          asset.set('type' , 'bfx');
                         };
                       });
                       Parse.Object.saveAll(assets, {
@@ -963,7 +982,7 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
             var AssetClass = Parse.Object.extend('Asset');
             symbols.forEach(function (symbol, index) {
               var asset = new AssetClass();
-              asset.set('amount', parseFloat(symbolAmounts[symbol].toFixed(7)));
+              asset.set('amount', (-parseFloat(symbolAmounts[symbol].toFixed(7))));
               asset.set('symbol', symbol);
               asset.set('user', user);
               asset.set('complete', false);
