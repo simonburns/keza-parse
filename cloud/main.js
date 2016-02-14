@@ -97,7 +97,7 @@ Parse.Cloud.afterSave('_User', function(request) {
 });
 
 Parse.Cloud.define('current_value', function(request, response) {
-  var UserClass = Parse.Object.extend('User');
+  var UserClass = Parse.Object.extend(Parse.User);
   var user = new UserClass();
   user.id = request.params['userId'];
   var AssetClass = Parse.Object.extend('Asset');
@@ -222,7 +222,7 @@ Parse.Cloud.define('current_value', function(request, response) {
 //  Returns a specific time range of historic data for a given asset
 //  request ex: {"userId":"9daVxo8WKt","symbol":"BTCUSD","from":"1448549083","to":"1450030240","resolution":"3600"}
 Parse.Cloud.define('asset_bars', function(request, response) {
-  var UserClass = Parse.Object.extend('User');
+  var UserClass = Parse.Object.extend(Parse.User);
   var user = new UserClass();
   user.id = request.params['userId'];
   var symbol = request.params['symbol'];
@@ -376,7 +376,7 @@ Parse.Cloud.define('tx_hook', function(request, response) {
     transactionQuery.find({
       success: function (transactions) {
         if(transactions.length === 0) {
-          var UserClass = Parse.Object.extend('_User');
+          var UserClass = Parse.Object.extend(Parse.User);
           var userQuery = new Parse.Query(UserClass);
           userQuery.equalTo('address', address);
           userQuery.first({
@@ -428,7 +428,7 @@ Parse.Cloud.define('tx_hook', function(request, response) {
           var complete = transaction.get('complete');
           if (balanceChange > 0) {
             if (confirmations == 3 && complete == false) {
-              var UserClass = Parse.Object.extend('_User');
+              var UserClass = Parse.Object.extend(Parse.User);
               var userQuery = new Parse.Query(UserClass);
               userQuery.equalTo('address', address);
               userQuery.first({
@@ -482,6 +482,21 @@ Parse.Cloud.define('tx_hook', function(request, response) {
           } else {
             var amountWithdrawn
             if (confirmations == 3 && complete == false) {
+
+            var AssetClass = Parse.Object.extend('Asset');
+            var assetQuery = new Parse.Query(UserClass);
+              userQuery.equalTo('address', address);
+              userQuery.first({
+                success: function(asset)
+              }, error: function (error) {
+                response.error('error querying user: '+error.code+' '+error.message);
+              }
+              });
+
+
+
+
+
               console.log({
                 'transaction' : transaction.id,
                 'amount' : balanceChange
@@ -551,8 +566,10 @@ Parse.Cloud.afterSave('Transaction', function(request) {
           newEvent.set('user', user);
           newEvent.save();
         };
+        var userQuery = new Parse.Query(Parse.User);
+        userQuery.equalTo('objectId', user.id);
         var pushQuery = new Parse.Query(Parse.Installation);
-        pushQuery.equalTo('user', user);
+        pushQuery.matchesQuery('user', userQuery);
         Parse.Push.send({
           where: pushQuery,
           data: {
@@ -575,6 +592,30 @@ Parse.Cloud.afterSave('Transaction', function(request) {
       }
     });
   }
+});
+
+Parse.Cloud.define('test_push', function(request, response) {
+  var userQuery = new Parse.Query(Parse.User);
+  userQuery.equalTo('objectId', 'RtrbJKNP8P');
+  var pushQuery = new Parse.Query(Parse.Installation);
+  pushQuery.matchesQuery('user', userQuery);
+  Parse.Push.send({
+    where: pushQuery,
+    data: {
+      alert : {
+        'title' : 'test',
+        'body' : 'body',
+        'type' : 'deposit'
+      }
+    }
+  }, {
+    success: function() {
+      response.success('test success');
+    },
+    error: function(error) {
+      response.error(error);
+    }
+  });
 });
 
 //  Sums up all assets sans transaction, and moves funds appropriately
@@ -611,20 +652,45 @@ Parse.Cloud.define('move_funds', function(request, response) {
             'toAddress' : brokerAddress,
             'amount' : parseFloat(brokerTotal.toFixed(7))
           }
-          Parse.Cloud.run('bfx_address', {
+          Parse.Cloud.run('bfx_address', {}, {
             success: function (address) {
-              var bfxAddress = address.result.address;
+              var bfxAddress = address.address;
               var bfxWithdraw = {
                 'toAddress' : bfxAddress,
                 'amount' : parseFloat(bfxTotal.toFixed(7))
               }
-              console.log('got broker deposit address');
               Parse.Cloud.run('blockio_withdraw', brokerWithdraw, {
                 success: function (brokerWithdrawSuccess) {
                   var brokerTransaction = brokerWithdrawSuccess['transaction'];
                   Parse.Cloud.run('blockio_withdraw', bfxWithdraw, {
                     success: function (bfxWithdrawSuccess) {
                       var bfxTransaction = bfxWithdrawSuccess['transaction'];
+                      assets.forEach(function (asset, index) {
+                        var assetSymbol = asset.get('symbol');
+                        if (assetSymbol != 'BTCJ') {
+                          asset.set('outTransaction', brokerTransaction);
+                          asset.set('type' , 'broker');
+                        } else {
+                          asset.set('outTransaction', bfxTransaction);
+                          asset.set('type' , 'bfx');
+                        };
+                      });
+                      Parse.Object.saveAll(assets, {
+                        success: function (savedAssets) {
+                          response.success({
+                            'transaction' : transaction,
+                            'brokerTotal' : brokerTotal,
+                            'jamTotal' : jamTotal,
+                            'assetTotals' : assetTotals
+                          });
+                        },
+                        error: function (error) {
+                          console.log('error saving assets: ' + error.message);
+                          response.success();
+                        }
+                      });
+                    }, error: function (error) {
+                      console.log('error withdrawing to bitfinex');
                       assets.forEach(function (asset, index) {
                         var assetSymbol = asset.get('symbol');
                         if (assetSymbol != 'BTCJ') {
@@ -647,19 +713,19 @@ Parse.Cloud.define('move_funds', function(request, response) {
                           response.success();
                         }
                       });
-                    }, error: function (error) {
-                      console.log('error withdrawing to bitfinex');
-                      response.error(error);
                     }
                   });
-                },
-                error: function (error) {
-                  console.log('error withdrawing to broker');
+                }, error: function (error) {
                   response.error(error);
                 }
               });
-            },
-            error: function (error) {
+              response.success({
+                'brokertotal' : parseFloat(brokerTotal.toFixed(7)),
+                'bfxTotal' : parseFloat(bfxTotal.toFixed(7)),
+                'bfxWithdraw' : bfxWithdraw,
+                'brokerWithdraw' : brokerWithdraw
+              });
+            }, error: function (error) {
               console.log('error getting bfx address');
               response.error(error);
             }
@@ -870,7 +936,7 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
     Parse.Cloud.useMasterKey();
     var amount = request.params['amount'];
     var toAddress = request.params['toAddress'];
-    var UserClass = Parse.Object.extend('User');
+    var UserClass = Parse.Object.extend(Parse.User);
     var user = new UserClass();
     user.id = request.params['userId'];
     user.fetch({
@@ -920,8 +986,10 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
                   success: function (savedEvent) {
                     Parse.Cloud.run("set_prices", {}, {
                       success: function (setPrices) {
+                        var userQuery = new Parse.Query(Parse.User);
+                        userQuery.equalTo('objectId', user.id);
                         var pushQuery = new Parse.Query(Parse.Installation);
-                        pushQuery.equalTo('user', user);
+                        pushQuery.matchesQuery('user', userQuery);
                         Parse.Push.send({
                           where: pushQuery,
                           data: {
@@ -1149,7 +1217,7 @@ Parse.Cloud.define('btcj_current_value_me', function(request, response) {
 });
 
 Parse.Cloud.define('btcj_asset_bars', function(request, response) {
-  var UserClass = Parse.Object.extend('User');
+  var UserClass = Parse.Object.extend(Parse.User);
   var user = new UserClass();
   user.id = request.params['userId'];
   var from = request.params['from'];
@@ -1373,7 +1441,7 @@ Parse.Cloud.define('blockio_update_transactions', function(request, response) {
 
 Parse.Cloud.define('archive_addresses', function(request, response) {
   Parse.Cloud.useMasterKey();
-  var UserClass = Parse.Object.extend('User');
+  var UserClass = Parse.Object.extend(Parse.User);
   var userQuery = new Parse.Query(UserClass);
   userQuery.find({
     success: function (users) {
@@ -1426,7 +1494,7 @@ Parse.Cloud.define('blockio_update_notifications', function(request, response) {
       var notificationsData = JSON.parse(notificationsResponse.text);
       var notifications = notificationsData.data;
 
-      var UserClass = Parse.Object.extend('User');
+      var UserClass = Parse.Object.extend(Parse.User);
       var userQuery = new Parse.Query(UserClass);
       userQuery.find({
         success: function (users) {
@@ -1485,7 +1553,7 @@ Parse.Cloud.define('bfx_address', function(request, response) {
     success: function (deposit) {
       response.success(deposit.data);
     }, error: function (error) {
-      response.error('error: '+error);
+      response.error(error);
     }
   });
 });
