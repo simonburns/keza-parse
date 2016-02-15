@@ -724,43 +724,47 @@ Parse.Cloud.job('bfx_move_funds', function(request, response) {
           brokerTotal += margin;
         };
       });
-      Parse.Cloud.run('bfx_address', {}, {
-        success: function (address) {
-          var bfxAddress = address.address;
-          var bfxWithdraw = {
-            'toAddress' : bfxAddress,
-            'amount' : parseFloat(bfxTotal.toFixed(7))
-          }
-          var bfxTransaction;
-          Parse.Cloud.run('blockio_withdraw', bfxWithdraw, {
-            success: function (bfxWithdrawSuccess) {
-              bfxTransaction = bfxWithdrawSuccess['transaction'];
-              assets.forEach(function (asset, index) {
-                var assetSymbol = asset.get('symbol');
-                if (assetSymbol == 'BTCJ') {
-                  asset.set('outTransaction', bfxTransaction);
-                  asset.set('type', 'bfx');
-                }
-              });
-              Parse.Object.saveAll(assets, {
-                success: function (savedAssets) {
-                  response.success('moved funds for '+ savedAssets.length + ' assets, transaction: '+bfxTransaction.id);
-                },
-                error: function (error) {
-                  console.log('error saving assets: ' + error.message);
-                  response.success();
-                }
-              });
-            }, error: function (error) {
-              console.log('error withdrawing to bitfinex');
-              response.error(error);
+      if (bfxTotal > 0.00005) {
+        Parse.Cloud.run('bfx_address', {}, {
+          success: function (address) {
+            var bfxAddress = address.address;
+            var bfxWithdraw = {
+              'toAddress' : bfxAddress,
+              'amount' : parseFloat(bfxTotal.toFixed(7))
             }
-          });
-        }, error: function (error) {
-          console.log('error getting bfx address');
-          response.error(error);
-        }
-      });
+            var bfxTransaction;
+            Parse.Cloud.run('blockio_withdraw', bfxWithdraw, {
+              success: function (bfxWithdrawSuccess) {
+                bfxTransaction = bfxWithdrawSuccess['transaction'];
+                assets.forEach(function (asset, index) {
+                  var assetSymbol = asset.get('symbol');
+                  if (assetSymbol == 'BTCJ') {
+                    asset.set('outTransaction', bfxTransaction);
+                    asset.set('type', 'bfx');
+                  }
+                });
+                Parse.Object.saveAll(assets, {
+                  success: function (savedAssets) {
+                    response.success('moved funds for '+ savedAssets.length + ' assets, transaction: '+bfxTransaction.id);
+                  },
+                  error: function (error) {
+                    console.log('error saving assets: ' + error.message);
+                    response.success();
+                  }
+                });
+              }, error: function (error) {
+                // console.log();
+                response.error('error withdrawing to bitfinex');
+              }
+            });
+          }, error: function (error) {
+            // console.log();
+            response.error('error getting bfx address');
+          }
+        });
+      } else {
+        response.success('no bfx asset funds to move');
+      }
     }, error: function (error) {
       response.error('error querying assets: '+error.code+' '+error.message);
     }
