@@ -1586,13 +1586,41 @@ Parse.Cloud.define('bfx_balances', function(request, response) {
     "nonce": Date.now().toString(),
   };
   payload = new Buffer(JSON.stringify(payload)).toString('base64');
-  var signature = Crypto.createHmac("sha384", bfxSecret).update(payload).digest('hex'), headers = {
+  var signature = Crypto.createHmac("sha384", bfxSecret).update(payload).digest('hex');
+  var headers = {
     'X-BFX-APIKEY': bfxKey,
     'X-BFX-PAYLOAD': payload,
     'X-BFX-SIGNATURE': signature
   }
   Parse.Cloud.httpRequest({
     url: bfxURL + '/balances',
+    headers: headers,
+    body: payload,
+    success: function (offers) {
+      response.success(offers.data);
+    }, error: function (error) {
+      response.error('error: '+error);
+    }
+  });
+});
+
+// Provides current Bitfinex wallet balances
+Parse.Cloud.define('bfx_history', function(request, response) {
+  var payload = {
+    "request": "/v1/history/movements",
+    "nonce": Date.now().toString(),
+    "currency": "BTC",
+    "limit": 500
+  };
+  payload = new Buffer(JSON.stringify(payload)).toString('base64');
+  var signature = Crypto.createHmac("sha384", bfxSecret).update(payload).digest('hex');
+  var headers = {
+    'X-BFX-APIKEY': bfxKey,
+    'X-BFX-PAYLOAD': payload,
+    'X-BFX-SIGNATURE': signature
+  }
+  Parse.Cloud.httpRequest({
+    url: bfxURL + '/history/movements',
     headers: headers,
     body: payload,
     success: function (offers) {
