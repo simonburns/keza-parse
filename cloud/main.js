@@ -1604,6 +1604,41 @@ Parse.Cloud.define('bfx_balances', function(request, response) {
   });
 });
 
+Parse.Cloud.define('bfx_status', function(request, response) {
+  Parse.Cloud.run('bfx_history', {}, {
+    success: function(historyData) {
+      var totalMargin = 0;
+      historyData.forEach(function(transaction, index) {
+        var amount = parseFloat(transaction.amount);
+        totalMargin += amount;
+      });
+      Parse.Cloud.run('bfx_balances', {}, {
+        success: function(balancesData) {
+          var depositAccount;
+          balancesData.forEach(function(account, index) {
+            if (account.type == 'deposit') {
+              depositAccount = account;
+            }
+          });
+          var balance = parseFloat(depositAccount.amount);
+          var profit = balance - totalMargin;
+          var percentage = ((balance / totalMargin) - 1) * 100;
+          response.success({
+            'totalMargin' : totalMargin,
+            'depositAccount' : depositAccount,
+            'profit' : profit,
+            'percentage' : percentage
+          });
+        }, error: function(error) {
+          response.error(error);
+        }
+      });
+    }, error: function(error) {
+      response.error(error);
+    }
+  });
+});
+
 // Provides current Bitfinex wallet balances
 Parse.Cloud.define('bfx_history', function(request, response) {
   var payload = {
