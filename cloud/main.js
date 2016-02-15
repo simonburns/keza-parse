@@ -699,7 +699,7 @@ Parse.Cloud.job('move_funds', function(request, response) {
   });
 });
 
-Parse.Cloud.define('bfx_move_funds', function(request, response) {
+Parse.Cloud.job('bfx_move_funds', function(request, response) {
   Parse.Cloud.useMasterKey();
   var assetTotals = {};
   var brokerTotal = 0;
@@ -744,7 +744,7 @@ Parse.Cloud.define('bfx_move_funds', function(request, response) {
               });
               Parse.Object.saveAll(assets, {
                 success: function (savedAssets) {
-                  response.success('moved funds for '+ savedAssets.length + ' assets, transaction: '+brokerTransaction.id);
+                  response.success('moved funds for '+ savedAssets.length + ' assets, transaction: '+bfxTransaction.id);
                 },
                 error: function (error) {
                   console.log('error saving assets: ' + error.message);
