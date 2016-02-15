@@ -317,11 +317,11 @@ Parse.Cloud.define('asset_bars', function(request, response) {
                     var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));
                     var amount = rangeAsset.get('amount');
                     margin = margin + amount;
-                    if (utc1970 < time) {
-                      margin = margin + amount;
+                    // if (utc1970 < time) {
+                      // margin = margin + amount;
                       var price = rangeAsset.get('price');
                       value = value + ((amount * bid) / price);
-                    };
+                    // };
                   });
                   if (value == 0) {
                     value = margin;
@@ -1263,68 +1263,109 @@ Parse.Cloud.define('btcj_asset_bars', function(request, response) {
           BTCJamQuery.find({
             success: function(portfolio) {
               var object = portfolio[0];
-              var returnData= object.get('return');
+              var returnData = object.get('return');
               var assetBars = [];
               if (bars.length > 0) {
                 start = bars[0]['time'];
                 end = bars[bars.length-1]['time'];
-              }
-              bars.forEach(function(bar, index) {
-                var time = bar['time'];
-                var close = bar['c'];
-                var margin = 0;
-                var value = 0;
-                var assetBar = {};
-                assets.forEach(function(rangeAsset, index) {
-                  var date = rangeAsset.get('createdAt');
-                  var utcCreated = parseInt((date.getTime()).toString().slice(0,-3));
-                  utcTime = parseInt((date.getTime()).toString().slice(0,-3));
-                  if (utcCreated < time && utcCreated < end) {
-                    var amount = rangeAsset.get('amount');
-                    // console.log("this is the amount: " + amount);
-                    margin = margin + amount;
-                    var base = (1+(returnData*1000000)/(1*1000000));
-                    // console.log('base: ' + base);
-                    var exponent = ((time - utcCreated)/(86400000*365));
-                    var exponentTop = (time - utcCreated);
-                    var exponentBottom = (86400000*365);
-                    // console.log("exponent top: " + exponentTop + "exponent bottom: " + exponentBottom);
-                    // console.log('exponent: ' + exponent);
-                    // console.log("exponent should be 0.00000130206747844");
-                    // console.log("utcCreated" + utcCreated);
-                    // console.log("time" + time);
-                    var pow = Math.pow(base, exponent);
-                    // console.log("pow: " + pow);
-                    var powerWithP = amount * pow;
-                    // console.log("powWithP: " + powerWithP);
-                    value = value + powerWithP;
-                    // console.log('this is the value: ' + value);
-                  } else {
-                    // console.log(utcCreated + " is less than both " + end + " and " + time);
+                bars.forEach(function(bar, index) {
+                  var time = bar['time'];
+                  var close = bar['c'];
+                  var margin = 0;
+                  var value = 0;
+                  var assetBar = {};
+                  assets.forEach(function(rangeAsset, index) {
+                    var date = rangeAsset.get('createdAt');
+                    var utcCreated = parseInt((date.getTime()).toString().slice(0,-3));
+                    utcTime = parseInt((date.getTime()).toString().slice(0,-3));
+                    if (utcCreated < time && utcCreated < end) {
+                      var amount = rangeAsset.get('amount');
+                      margin = margin + amount;
+                      var base = (1+(returnData*1000000)/(1*1000000));
+                      var exponent = ((time - utcCreated)/(86400000*365));
+                      var exponentTop = (time - utcCreated);
+                      var exponentBottom = (86400000*365);
+                      var pow = Math.pow(base, exponent);
+                      var powerWithP = amount * pow;
+                      value = value + powerWithP;
+                    };
+                  });
+                  var change = 0;
+                  if (margin > 0) {
+                    change = ((value - margin) / margin) * 100;
+                  }
+                  assetBars.push({
+                    'margin': margin,
+                    'value': value,
+                    'time': time,
+                    'change': change
+                  });
+                });
+                response.success({
+                  'utcCreated' : utcTime,
+                  'assets' : assets.length,
+                  'assets amount' : assets,
+                  'barCount' : bars.length,
+                  'bars': bars,
+                  'start' : from,
+                  'end' : to,
+                  'assetBars' : assetBars,
+                  'symbol' : 'BTCJ'
+                });
+              } else {
+                var getQuoteURL = 'https://1broker.com/api/v1/market/quotes.php?symbols=SP500&token='+brokerToken;
+                Parse.Cloud.httpRequest({
+                  url: getQuoteURL,
+                  success: function (getQuoteResponse) {
+                    var quotes = getQuoteResponse.data.response;
+                    var quote = quotes[0];
+                    var quoteSymbol = quote['symbol'];
+                    var time = Date.parse(quote['updated']) / 1000;
+                    var margin = 0;
+                    var value = 0;
+                    var assetBar = {};
+                    assets.forEach(function(rangeAsset, index) {
+                      var date = rangeAsset.get('createdAt');
+                      var utcCreated = parseInt((date.getTime()).toString().slice(0,-3));
+                      var amount = rangeAsset.get('amount');
+                      margin = margin + amount;
+                      // if (utcCreated < time) {
+                        var base = (1+(returnData*1000000)/(1*1000000));
+                        var exponent = ((time - utcCreated)/(86400000*365));
+                        var exponentTop = (time - utcCreated);
+                        var exponentBottom = (86400000*365);
+                        var pow = Math.pow(base, exponent);
+                        var powerWithP = amount * pow;
+                        value = value + powerWithP;
+                      // };
+                    });
+                    if (value == 0) {
+                      value = parseFloat(margin);
+                    };
+                    var change = 0;
+                    if (margin > 0) {
+                      change = ((value - margin) / margin) * 100;
+                    };
+                    assetBars.push({
+                      'margin': margin,
+                      'value': value,
+                      'time': time,
+                      'change': change
+                    });
+                    response.success({
+                      'utcCreated' : utcTime,
+                      'assets' : assets.length,
+                      'assets amount' : assets,
+                      'start' : time,
+                      'end' : time,
+                      'assetBars' : assetBars,
+                      'symbol' : 'BTCJ'
+                    });
+                  }, error: function (error) {
+                    response.error('error getting quote: ' + error.message);
                   }
                 });
-                var change = 0;
-                if (margin > 0) {
-                  change = ((value - margin) / margin) * 100;
-                }
-                assetBars.push({
-                  'margin': margin,
-                  'value': value,
-                  'time': time,
-                  'change': change
-                });
-              });
-              response.success({
-                'utcCreated' : utcTime,
-                'assets' : assets.length,
-                'assets amount' : assets,
-                'barCount' : bars.length,
-                'bars': bars,
-                'start' : from,
-                'end' : to,
-                'assetBars' : assetBars,
-                'symbol' : 'BTCJ'
-              });
+              }
             }, error: function(error) {
               response.error('error: ' + error.message);
             }
@@ -1604,7 +1645,7 @@ Parse.Cloud.define('bfx_balances', function(request, response) {
   });
 });
 
-Parse.Cloud.define('bfx_status', function(request, response) {
+Parse.Cloud.job('bfx_status', function(request, response) {
   Parse.Cloud.run('bfx_history', {}, {
     success: function(historyData) {
       var totalMargin = 0;
@@ -1620,15 +1661,29 @@ Parse.Cloud.define('bfx_status', function(request, response) {
               depositAccount = account;
             }
           });
-          var balance = parseFloat(depositAccount.amount);
-          var profit = balance - totalMargin;
-          var percentage = ((balance / totalMargin) - 1) * 100;
-          response.success({
-            'totalMargin' : totalMargin,
-            'depositAccount' : depositAccount,
-            'profit' : profit,
-            'percentage' : percentage
+          var amount = parseFloat(depositAccount.amount);
+          var profit = amount - totalMargin;
+          var percentage = ((amount / totalMargin) - 1) * 100;
+
+          var BFXClass = Parse.Object.extend('Bitfinex');
+          var bfx = new BFXClass();
+          bfx.set('profit', parseFloat(profit));
+          bfx.set('margin', parseFloat(totalMargin));
+          bfx.set('available', parseFloat(depositAccount.available));
+          bfx.set('amount', parseFloat(amount));
+          bfx.save(null, {
+            success: function(savedBFX) {
+              response.success('bfx saved');
+            }, error: function(error) {
+              response.error('bfx error saving');
+            }
           });
+          // response.success({
+          //   'totalMargin' : totalMargin,
+          //   'depositAccount' : depositAccount,
+          //   'profit' : profit,
+          //   'percentage' : percentage
+          // });
         }, error: function(error) {
           response.error(error);
         }
