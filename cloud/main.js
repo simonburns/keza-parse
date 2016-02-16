@@ -110,123 +110,129 @@ Parse.Cloud.afterSave('_User', function(request) {
 
 Parse.Cloud.define('current_value', function(request, response) {
   var UserClass = Parse.Object.extend(Parse.User);
-  var user = new UserClass();
-  user.id = request.params['userId'];
-  var AssetClass = Parse.Object.extend('Asset');
-  var assetsQuery = new Parse.Query(AssetClass);
-  assetsQuery.equalTo('user', user);
-  assetsQuery.find({
-    success: function (assets) {
-      var values = [];
-      var totalValue = 0;
-      if (assets) {
-        var symbols = [];
-        var assetsDict = {};
-        assets.forEach(function(asset, index) {
-          var symbol = asset.get('symbol');
-          if (symbol != 'BTCJ') {
-            symbols.push(symbol);
-          };
-          if (!(assetsDict.hasOwnProperty(symbol))) {
-            assetsDict[symbol] = [asset];
-          } else {
-            var assetsArray = assetsDict[symbol];
-            assetsArray.push(asset);
-            assetsDict[symbol] = assetsArray;
-          };
-        });
-        var getQuoteURL = 'https://1broker.com/api/v1/market/quotes.php?symbols='+symbols.toString()+'&token='+brokerToken;
-        Parse.Cloud.httpRequest({
-          url: getQuoteURL,
-          success: function (getQuoteResponse) {
-            var quotes = getQuoteResponse.data.response;
-            if (quotes) {
-              var btcjTime;
-              quotes.forEach(function(quote, index) {
-                console.log('quote: '+quote['bid']);
-                var bid = quote['bid'];
-                var quoteSymbol = quote['symbol'];
-                var time = Date.parse(quote['updated']) / 1000;
-                if (quoteSymbol == 'SP500') {
-                  btcjTime = time;
-                }
-                var margin = 0;
-                var value = 0;
-                var symbolAssets = assetsDict[quoteSymbol];
-                console.log(symbolAssets);
-                symbolAssets.forEach(function(rangeAsset, index) {
-                  var date = rangeAsset.get('createdAt');
-                  var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));
-                  var amount = rangeAsset.get('amount');
-                  console.log('amount: '+amount);
-                  margin = margin + amount;
-                  // if (utc1970 < time) {
-                    var price = rangeAsset.get('price');
-                    value = value + ((amount * bid) / price);
-                  // };
-                });
-                if (!value) {
-                  value = margin;
-                };
-                var change = 0;
-                if (margin > 0) {
-                  change = ((value - margin) / margin) * 100;
-                };
-                values.push(value);
-                totalValue += value;
-              });
-              var assetValue = 0;
-              var BTCJamClass = Parse.Object.extend('BTCJam');
-              var BTCJamQuery = new Parse.Query(BTCJamClass);
-              BTCJamQuery.exists('return');
-              BTCJamQuery.find({
-                success: function(portfolio) {
-                  var object = portfolio[0];
-                  var returnData = object.get('return');
-                  var btcjMargin = 0;
-                  assetsDict['BTCJ'].forEach(function(rangeAsset, index) {
-                    var btcjValue = 0;
-                    var date = rangeAsset.get('createdAt');
-                    var amount = rangeAsset.get('amount');
-                    var utcCreated = parseInt((date.getTime()).toString().slice(0,-3));
-                    btcjMargin = btcjMargin + amount;
-                    var base = (1+(returnData*1000000)/(1*1000000));
-                    var exponent = ((btcjTime - utcCreated)/(86400000*365));
-                    var exponentTop = (btcjTime - utcCreated);
-                    var exponentBottom = (86400000*365);
-                    var pow = Math.pow(base, exponent);
-                    var powerWithP = amount * pow;
-                    btcjValue = btcjValue + powerWithP;
-                    assetValue = assetValue + btcjValue;
+  var userQuery = new Parse.Query(UserClass);
+  userQuery.equalTo('objectId', request.params['userId']);
+  userQuery.first({
+    success: function(user) {
+      var AssetClass = Parse.Object.extend('Asset');
+      var assetsQuery = new Parse.Query(AssetClass);
+      assetsQuery.equalTo('user', user);
+      assetsQuery.find({
+        success: function (assets) {
+          var values = [];
+          var totalValue = 0;
+          if (assets) {
+            var symbols = [];
+            var assetsDict = {};
+            assets.forEach(function(asset, index) {
+              var symbol = asset.get('symbol');
+              if (symbol != 'BTCJ') {
+                symbols.push(symbol);
+              };
+              if (!(assetsDict.hasOwnProperty(symbol))) {
+                assetsDict[symbol] = [asset];
+              } else {
+                var assetsArray = assetsDict[symbol];
+                assetsArray.push(asset);
+                assetsDict[symbol] = assetsArray;
+              };
+            });
+            var getQuoteURL = 'https://1broker.com/api/v1/market/quotes.php?symbols='+symbols.toString()+'&token='+brokerToken;
+            Parse.Cloud.httpRequest({
+              url: getQuoteURL,
+              success: function (getQuoteResponse) {
+                var quotes = getQuoteResponse.data.response;
+                if (quotes) {
+                  var btcjTime;
+                  quotes.forEach(function(quote, index) {
+                    console.log('quote: '+quote['bid']);
+                    var bid = quote['bid'];
+                    var quoteSymbol = quote['symbol'];
+                    var time = Date.parse(quote['updated']) / 1000;
+                    if (quoteSymbol == 'SP500') {
+                      btcjTime = time;
+                    }
+                    var margin = 0;
+                    var value = 0;
+                    var symbolAssets = assetsDict[quoteSymbol];
+                    console.log(symbolAssets);
+                    symbolAssets.forEach(function(rangeAsset, index) {
+                      var date = rangeAsset.get('createdAt');
+                      var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));
+                      var amount = rangeAsset.get('amount');
+                      console.log('amount: '+amount);
+                      margin = margin + amount;
+                      // if (utc1970 < time) {
+                        var price = rangeAsset.get('price');
+                        value = value + ((amount * bid) / price);
+                      // };
+                    });
+                    if (!value) {
+                      value = margin;
+                    };
+                    var change = 0;
+                    if (margin > 0) {
+                      change = ((value - margin) / margin) * 100;
+                    };
+                    values.push(value);
+                    totalValue += value;
                   });
-                  values.push(assetValue);
-                  totalValue += assetValue;
+                  var assetValue = 0;
+                  var BTCJamClass = Parse.Object.extend('BTCJam');
+                  var BTCJamQuery = new Parse.Query(BTCJamClass);
+                  BTCJamQuery.exists('return');
+                  BTCJamQuery.find({
+                    success: function(portfolio) {
+                      var object = portfolio[0];
+                      var returnData = object.get('return');
+                      var btcjMargin = 0;
+                      assetsDict['BTCJ'].forEach(function(rangeAsset, index) {
+                        var btcjValue = 0;
+                        var date = rangeAsset.get('createdAt');
+                        var amount = rangeAsset.get('amount');
+                        var utcCreated = parseInt((date.getTime()).toString().slice(0,-3));
+                        btcjMargin = btcjMargin + amount;
+                        var base = (1+(returnData*1000000)/(1*1000000));
+                        var exponent = ((btcjTime - utcCreated)/(86400000*365));
+                        var exponentTop = (btcjTime - utcCreated);
+                        var exponentBottom = (86400000*365);
+                        var pow = Math.pow(base, exponent);
+                        var powerWithP = amount * pow;
+                        btcjValue = btcjValue + powerWithP;
+                        assetValue = assetValue + btcjValue;
+                      });
+                      values.push(assetValue);
+                      totalValue += assetValue;
+                      response.success({
+                        'values' : values,
+                        'total' : totalValue,
+                      });
+                    }, error: function(error) {
+                      response.error('error: ' + error.message);
+                    }
+                  });
+                } else {
                   response.success({
-                    'values' : values,
-                    'total' : totalValue,
+                    'values' : {},
+                    'total' : 0,
                   });
-                }, error: function(error) {
-                  response.error('error: ' + error.message);
                 }
-              });
-            } else {
-              response.success({
-                'values' : {},
-                'total' : 0,
-              });
-            }
-          }, error: function (error) {
-            response.error('error getting quote: ' + error.message);
-          }
-        });
-      } else {
-        response.success({
-          'values' : values,
-          'total' : totalValue,
-        });
-      };
-    }, error: function (error) {
-      response.error('error: ' + error.message);
+              }, error: function (error) {
+                response.error('error getting quote: ' + error.message);
+              }
+            });
+          } else {
+            response.success({
+              'values' : values,
+              'total' : totalValue,
+            });
+          };
+        }, error: function (error) {
+          response.error('error: ' + error.message);
+        }
+      });
+    }, error: function(error) {
+      console.error('error querying user '+error.text);
     }
   });
 });
@@ -269,16 +275,19 @@ Parse.Cloud.define('asset_bars', function(request, response) {
                 assets.forEach(function(rangeAsset, index) {
                   var date = rangeAsset.get('createdAt');
                   var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));
-                  var amount = rangeAsset.get('amount');
+                  var amount = parseFloat(rangeAsset.get('amount'));
                   if (utc1970 < time && utc1970 < end) {
-                    margin = margin + amount;
+                    margin += amount;
                     var price = rangeAsset.get('price');
-                    value = value + ((amount * close) / price); // Using close... could be any of OHLC
+                    value += parseFloat((amount * close) / price); // Using close... could be any of OHLC
+                  } else {
+                    margin += amount;
+                    value += amount;
                   };
                 });
-                if (!value) {
-                  value = margin;
-                };
+                // if (!value) {
+                //   value = margin;
+                // };
                 var change = 0;
                 if (margin > 0) {
                   change = ((value - margin) / margin) * 100;
@@ -315,16 +324,16 @@ Parse.Cloud.define('asset_bars', function(request, response) {
                   assets.forEach(function(rangeAsset, index) {
                     var date = rangeAsset.get('createdAt');
                     var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));
-                    var amount = rangeAsset.get('amount');
-                    margin = margin + amount;
+                    var amount = parseFloat(rangeAsset.get('amount'));
+                    margin += amount;
                     // if (utc1970 < time) {
                       // margin = margin + amount;
                       var price = rangeAsset.get('price');
-                      value = value + ((amount * bid) / price);
+                      value += parseFloat((amount * bid) / price);
                     // };
                   });
                   if (value == 0) {
-                    value = margin;
+                    value = parseFloat(margin);
                   };
                   var change = 0;
                   if (margin > 0) {
@@ -1278,8 +1287,8 @@ Parse.Cloud.define('btcj_asset_bars', function(request, response) {
                     var date = rangeAsset.get('createdAt');
                     var utcCreated = parseInt((date.getTime()).toString().slice(0,-3));
                     utcTime = parseInt((date.getTime()).toString().slice(0,-3));
+                    var amount = rangeAsset.get('amount');
                     if (utcCreated < time && utcCreated < end) {
-                      var amount = rangeAsset.get('amount');
                       margin = margin + amount;
                       var base = (1+(returnData*1000000)/(1*1000000));
                       var exponent = ((time - utcCreated)/(86400000*365));
@@ -1288,6 +1297,9 @@ Parse.Cloud.define('btcj_asset_bars', function(request, response) {
                       var pow = Math.pow(base, exponent);
                       var powerWithP = amount * pow;
                       value = value + powerWithP;
+                    } else {
+                      margin += amount;
+                      value += amount;
                     };
                   });
                   var change = 0;
