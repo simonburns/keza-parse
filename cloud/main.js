@@ -960,7 +960,7 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
   user.id = request.params['userId'];
   user.fetch({
     success: function (fetchedUser) {
-      Parse.Cloud.run('current_value', {}, {
+      Parse.Cloud.run('current_value', {'userId' : fetchedUser.id}, {
         success: function(currentValue) {
           var total = currentValue.total;
           if (amount <= total) {
