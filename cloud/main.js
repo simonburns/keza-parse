@@ -1392,7 +1392,7 @@ Parse.Cloud.define('btcj_asset_bars', function(request, response) {
   });
 });
 
-Parse.Cloud.define('broker_positions', function(request, response) {
+Parse.Cloud.job('broker_positions', function(request, response) {
   Parse.Cloud.useMasterKey();
   var AssetClass = Parse.Object.extend('Asset');
   var assetQuery = new Parse.Query(AssetClass);
