@@ -29,78 +29,67 @@ Parse.Cloud.afterSave('_User', function(request) {
         var weights = fetchedPortfolio.get('weights');
         user.set('symbols', symbols);
         user.set('weights', weights);
-        user.save(null, {
-          success: function(savedUser) {
+        Parse.Cloud.httpRequest({
+          url: 'https://block.io/api/v2/get_new_address/?api_key='+blockApiKey,
+          success: function (walletResponse) {
+            var walletData = JSON.parse(walletResponse.text);
+            var network = walletData.data.network;
+            var userId = walletData.data.user_id;
+            var address = walletData.data.address;
+            var label = walletData.data.label;
+            var WalletClass = Parse.Object.extend('Wallet');
+            var wallet = new WalletClass();
+            user.set('address', address);
+            user.set('wallet', wallet);
+            console.log('got wallet: '+address);
             Parse.Cloud.httpRequest({
-              url: 'https://block.io/api/v2/get_new_address/?api_key='+blockApiKey,
-              success: function (walletResponse) {
-                var walletData = JSON.parse(walletResponse.text);
-                var network = walletData.data.network;
-                var userId = walletData.data.user_id;
-                var address = walletData.data.address;
-                var label = walletData.data.label;
-                var WalletClass = Parse.Object.extend('Wallet');
-                var wallet = new WalletClass();
-                wallet.set('network', network);
-                wallet.set('userId', userId);
-                wallet.set('address', address);
-                wallet.set('label', label);
-                wallet.set('user', user);
-                wallet.save();
-                user.set('address', address);
-                user.set('wallet', wallet);
-                user.save();
-                console.log('got wallet: '+address);
-                Parse.Cloud.httpRequest({
-                  url: 'https://block.io/api/v2/create_notification/?api_key='+blockApiKey+'&type=address&address='+walletData.data.address+'&url=https://'+parseAppId+':javascript-key%3D'+parseJavascriptKey+'@api.parse.com/1/functions/tx_hook',
-                  success: function (notificationResponse) {
-                    var notificationData = JSON.parse(notificationResponse.text);
-                    var network = notificationData.data.network;
-                    var notificationId = notificationData.data.notification_id;
-                    var type = notificationData.data.type;
-                    var enabled = notificationData.data.enabled;
-                    var url = notificationData.data.url;
+              url: 'https://block.io/api/v2/create_notification/?api_key='+blockApiKey+'&type=address&address='+walletData.data.address+'&url=https://'+parseAppId+':javascript-key%3D'+parseJavascriptKey+'@api.parse.com/1/functions/tx_hook',
+              success: function (notificationResponse) {
+                var notificationData = JSON.parse(notificationResponse.text);
+                var network = notificationData.data.network;
+                var notificationId = notificationData.data.notification_id;
+                var type = notificationData.data.type;
+                var enabled = notificationData.data.enabled;
+                var url = notificationData.data.url;
+                user.set('complete', true);
+                user.save(null, {
+                  success: function(savedUser) {
                     wallet.set('network', network);
                     wallet.set('notificationId', notificationId);
                     wallet.set('type', type);
                     wallet.set('enabled', enabled);
                     wallet.set('url', url);
-                    wallet.set('user', user);
+                    wallet.set('user', savedUser);
+                    wallet.set('userId', userId);
+                    wallet.set('address', address);
+                    wallet.set('label', label);
                     wallet.save();
-                    user.set('complete', true);
-                    user.save(null, {
-                      success: function(savedUser) {
-                        var EventClass = Parse.Object.extend('Event');
-                        var accountEvent = new EventClass();
-                        accountEvent.set('user', user);
-                        accountEvent.set('detail', user.get('email'));
-                        accountEvent.set('name', 'New Account Created');
-                        accountEvent.set('type', 'account');
-                        accountEvent.set('read', false);
-                        accountEvent.set('progress', parseFloat(1));
-                        accountEvent.save();
-                        console.log('added wallet notification: '+notificationId);
-                      }, error: function(error) {
-                        console.error('error saving user '+error.text);
-                      }
-                    });
-
-                  },
-                  error: function (error) {
-                    console.error('error creating notification '+error.text);
+                    var EventClass = Parse.Object.extend('Event');
+                    var accountEvent = new EventClass();
+                    accountEvent.set('user', user);
+                    accountEvent.set('detail', user.get('email'));
+                    accountEvent.set('name', 'New Account Created');
+                    accountEvent.set('type', 'account');
+                    accountEvent.set('read', false);
+                    accountEvent.set('progress', parseFloat(1));
+                    accountEvent.save();
+                    console.log('user afterSave complete with wallet: '+address);
+                  }, error: function(error) {
+                    console.error(error);
                   }
                 });
               },
               error: function (error) {
-                console.error('wallet create failed: '+error.text);
+                console.error(error);
               }
             });
-          }, error: function(error) {
-            console.error('error saving user '+error.text);
+          },
+          error: function (error) {
+            console.error(error);
           }
         });
       }, error: function(fetchedPortfolio, error) {
-        console.error('error fetching portfolio '+error.text);
+        console.error(error);
       }
     });
   } else {
