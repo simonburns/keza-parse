@@ -68,7 +68,7 @@ Parse.Cloud.afterSave('_User', function(request) {
                     var accountEvent = new EventClass();
                     accountEvent.set('user', user);
                     accountEvent.set('detail', user.get('email'));
-                    accountEvent.set('name', 'New Account Created');
+                    accountEvent.set('name', 'Account Created');
                     accountEvent.set('type', 'account');
                     accountEvent.set('read', false);
                     accountEvent.set('progress', parseFloat(1));
@@ -109,6 +109,7 @@ Parse.Cloud.define('current_value', function(request, response) {
       assetsQuery.find({
         success: function (assets) {
           var values = [];
+          var symbols = [];
           var totalValue = 0;
           if (assets) {
             var symbols = [];
@@ -164,6 +165,7 @@ Parse.Cloud.define('current_value', function(request, response) {
                       change = ((value - margin) / margin) * 100;
                     };
                     values.push(value);
+                    symbols.push(quoteSymbol);
                     totalValue += value;
                   });
                   var assetValue = 0;
@@ -191,10 +193,12 @@ Parse.Cloud.define('current_value', function(request, response) {
                         assetValue = assetValue + btcjValue;
                       });
                       values.push(assetValue);
+                      symbols.push('BTCJ');
                       totalValue += assetValue;
                       response.success({
                         'values' : values,
                         'total' : totalValue,
+                        'symbols' : symbols
                       });
                     }, error: function(error) {
                       response.error('error: ' + error.message);
@@ -1587,7 +1591,46 @@ Parse.Cloud.define('blockio_update_notifications', function(request, response) {
       response.error('error getting transactions: '+error.code+' '+error.message);
     }
   });
+});
 
+Parse.Cloud.define('change_portfolio', function(request, response) {
+  Parse.Cloud.useMasterKey();
+  var userId = request.params['userId'];
+  var portfolioId = request.params['portfolioId'];
+  var symbols = request.params['symbols'];
+  var weights = request.params['weights'];
+  Parse.Cloud.run('current_value', {'userId' : userId}, {
+    success: function(currentValueData) {
+      var UserClass = Parse.Object.extend(Parse.User);
+      var userQuery = new Parse.Query(UserClass);
+      userQuery.include('portfolio');
+      userQuery.equalTo('objectId', userId);
+      userQuery.first({
+        success: function(user) {
+          var currentValue = currentValueData['total'];
+          var currentValues
+          var currentPortfolio = user.get('portfolio');
+          var currentSymbols = currentPortfolio.get('symbols');
+          var currentWeights = currentPortfolio.get('weights');
+
+
+
+
+          response.success({
+            'currentValue' : currentValue,
+            'currentSymbols' : currentSymbols,
+            'currentWeights' : currentWeights,
+            'symbols' : symbols,
+            'weights' : weights
+          });
+        }, error: function(error) {
+          response.error(error);
+        }
+      });
+    }, error: function(error) {
+      response.error(error);
+    }
+  });
 });
 
 Parse.Cloud.define('bfx_socket', function(request, response) {
