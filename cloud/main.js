@@ -109,7 +109,7 @@ Parse.Cloud.define('current_value', function(request, response) {
       assetsQuery.find({
         success: function (assets) {
           var values = [];
-          var symbols = [];
+          var finalSymbols = [];
           var totalValue = 0;
           if (assets) {
             var symbols = [];
@@ -164,8 +164,8 @@ Parse.Cloud.define('current_value', function(request, response) {
                     if (margin > 0) {
                       change = ((value - margin) / margin) * 100;
                     };
-                    values.push(value);
-                    symbols.push(quoteSymbol);
+                    values.push(parseFloat(value.toFixed(7)));
+                    finalSymbols.push(quoteSymbol);
                     totalValue += value;
                   });
                   var assetValue = 0;
@@ -192,13 +192,13 @@ Parse.Cloud.define('current_value', function(request, response) {
                         btcjValue = btcjValue + powerWithP;
                         assetValue = assetValue + btcjValue;
                       });
-                      values.push(assetValue);
-                      symbols.push('BTCJ');
+                      values.push(parseFloat(assetValue.toFixed(7)));
+                      finalSymbols.push('BTCJ');
                       totalValue += assetValue;
                       response.success({
                         'values' : values,
-                        'total' : totalValue,
-                        'symbols' : symbols
+                        'total' : parseFloat(totalValue.toFixed(7)),
+                        'symbols' : finalSymbols
                       });
                     }, error: function(error) {
                       response.error('error: ' + error.message);
@@ -217,7 +217,7 @@ Parse.Cloud.define('current_value', function(request, response) {
           } else {
             response.success({
               'values' : values,
-              'total' : totalValue,
+              'total' : parseFloat(totalValue.toFixed(7)),
             });
           };
         }, error: function (error) {
@@ -261,7 +261,7 @@ Parse.Cloud.define('asset_bars', function(request, response) {
               var assetBars = [];
               bars.forEach(function(bar, index) {
                 var time = bar['time'];
-                var close = bar['c'];
+                var close = parseFloat(bar['c']);
                 var margin = 0;
                 var value = 0;
                 var assetBar = {};
@@ -270,12 +270,12 @@ Parse.Cloud.define('asset_bars', function(request, response) {
                   var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));
                   var amount = parseFloat(rangeAsset.get('amount'));
                   if (utc1970 < time && utc1970 < end) {
-                    margin += amount;
+                    margin += parseFloat(amount);
                     var price = rangeAsset.get('price');
                     value += parseFloat((amount * close) / price); // Using close... could be any of OHLC
                   } else {
-                    margin += amount;
-                    value += amount;
+                    margin += parseFloat(amount);
+                    value += parseFloat(amount);
                   };
                 });
                 // if (!value) {
@@ -283,13 +283,13 @@ Parse.Cloud.define('asset_bars', function(request, response) {
                 // };
                 var change = 0;
                 if (margin > 0) {
-                  change = ((value - margin) / margin) * 100;
+                  change = parseFloat(((value - margin) / margin) * 100);
                 };
-                assetBar['margin'] = margin;
-                assetBar['value'] = value;
+                assetBar['margin'] = parseFloat(margin.toFixed(8));
+                assetBar['value'] = parseFloat(value.toFixed(8));
                 assetBar['time'] = time;
-                assetBar['change'] = change;
-                assetBar['price'] = close;
+                assetBar['change'] = parseFloat(change.toFixed(8));
+                assetBar['price'] = parseFloat(close);
                 assetBars.push(assetBar);
               });
               response.success({
@@ -539,69 +539,75 @@ Parse.Cloud.define('tx_hook', function(request, response) {
 Parse.Cloud.afterSave('Transaction', function(request) {
   Parse.Cloud.useMasterKey();
   var transaction = request.object;
-  var value = parseFloat(transaction.get('balanceChange'));
+  var value = parseFloat(transaction.get('balanceChange').toFixed(8));
+  var progress = parseFloat(transaction.get('confirmations')/3);
   if (value > 0) {
-    var progress = parseFloat(transaction.get('confirmations')/3);
-    // if (progress ) {
-    //
-    // }
-    var alert = 'Deposit Received';
-    var name = 'New Deposit';
-    if (progress >= 1) {
-      alert = 'Deposit Complete';
-      name = 'Completed Deposit'
-    } else if (progress > 0)  {
-      alert = 'deposit updated';
-      name = 'Deposit in Progress'
-    };
-    var EventClass = Parse.Object.extend('Event');
-    var eventQuery = new Parse.Query(EventClass);
-    eventQuery.equalTo('transaction', transaction);
-    eventQuery.first({
-      success: function (eventObject) {
-        var user = transaction.get('user');
-        if (eventObject) {
-          eventObject.set('progress', progress);
-          eventObject.set('alert', alert);
-          eventObject.set('name', alert);
-          eventObject.save();
-        } else {
-          var newEvent = new EventClass();
-          newEvent.set('transaction', transaction);
-          newEvent.set('progress', progress);
-          newEvent.set('type', 'deposit');
-          newEvent.set('name', name);
-          newEvent.set('value', value);
-          newEvent.set('read', false);
-          newEvent.set('alert', alert);
-          newEvent.set('user', user);
-          newEvent.save();
-        };
-        var userQuery = new Parse.Query(Parse.User);
-        userQuery.equalTo('objectId', user.id);
-        var pushQuery = new Parse.Query(Parse.Installation);
-        pushQuery.matchesQuery('user', userQuery);
-        Parse.Push.send({
-          where: pushQuery,
-          data: {
-            alert : {
-              'title' : name,
-              'body' : alert,
-              'type' : 'deposit'
-            }
-          }
-        }, {
-          success: function() {
-            console.log('push success: ');
-          },
-          error: function(error) {
-            console.log('push error: '+error);
-          }
-        });
-      }, error: function (error) {
-        console.error('error querying events: ' + error);
+    if (progress == 1 || progress == 0) {
+      alert = 'Your '+value+' BTC deposit is in progress, check back soon';
+      var name = 'Keza';
+      if (progress == 1) {
+        alert = 'Your '+value+' BTC deposit is complete! It will now be invested' ;
+        name = 'Keza';
       }
-    });
+      // else if (progress > 0)  {
+      //   alert = 'Your'+value+'BTC deposit is in progress.';
+      //   name = value+' BTC Deposit Updated';
+      // };
+      var EventClass = Parse.Object.extend('Event');
+      var eventQuery = new Parse.Query(EventClass);
+      eventQuery.equalTo('transaction', transaction);
+      eventQuery.first({
+        success: function (eventObject) {
+          var user = transaction.get('user');
+          var oldProgress = 0;
+          if (eventObject) {
+            var oldProgress = eventObject.get(progress);
+            eventObject.set('progress', progress);
+            eventObject.set('alert', alert);
+            eventObject.set('name', alert);
+            eventObject.save();
+          } else {
+            var newEvent = new EventClass();
+            newEvent.set('transaction', transaction);
+            newEvent.set('progress', progress);
+            newEvent.set('type', 'deposit');
+            newEvent.set('name', name);
+            newEvent.set('value', value);
+            newEvent.set('read', false);
+            newEvent.set('alert', alert);
+            newEvent.set('user', user);
+            newEvent.save();
+          };
+          if (oldProgress != 1) {
+            var userQuery = new Parse.Query(Parse.User);
+            userQuery.equalTo('objectId', user.id);
+            var pushQuery = new Parse.Query(Parse.Installation);
+            pushQuery.matchesQuery('user', userQuery);
+            Parse.Push.send({
+              where: pushQuery,
+              data: {
+                alert : {
+                  'title' : name,
+                  'body' : alert,
+                  'type' : 'deposit'
+                }
+              }
+            }, {
+              success: function() {
+                console.log('push success: ');
+              },
+              error: function(error) {
+                console.log('push error: '+error);
+              }
+            });
+          } else {
+            console.log('already sent push');
+          }
+        }, error: function (error) {
+          console.error('error querying events: ' + error);
+        }
+      });
+    }
   }
 });
 
@@ -782,6 +788,7 @@ Parse.Cloud.define('set_prices', function(request, response) {
   var AssetClass = Parse.Object.extend('Asset');
   var assetQuery = new Parse.Query(AssetClass);
   assetQuery.doesNotExist('price');
+  assetQuery.notEqualTo('symbol', 'BTCJ');
   assetQuery.find({
     success: function (assets) {
       // Get unique symbols (and totals, for buying later maybe)
@@ -971,7 +978,7 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
               'amount' : parseFloat(totalAmount.toFixed(7)),
               'toAddress' : toAddress
             };
-            Parse.Cloud.run('coinbase_withdraw', withdraw, {
+            Parse.Cloud.run('n3ru80fv7bv08147f3fubfiuvbb3r93bhf98he92w', withdraw, {
               success: function (coinbaseWithdraw) {
                 var transactionId = coinbaseWithdraw.txn.id
                 var newAssets = [];
@@ -1300,10 +1307,10 @@ Parse.Cloud.define('btcj_asset_bars', function(request, response) {
                     change = ((value - margin) / margin) * 100;
                   }
                   assetBars.push({
-                    'margin': margin,
-                    'value': value,
+                    'margin': parseFloat(margin.toFixed(8)),
+                    'value': parseFloat(value.toFixed(8)),
                     'time': time,
-                    'change': change
+                    'change': parseFloat(change.toFixed(8))
                   });
                 });
                 response.success({
@@ -1446,28 +1453,82 @@ Parse.Cloud.job('broker_positions', function(request, response) {
 
 // Not being used atm
 //  Sums up all priced assets (needs paging added!)
-Parse.Cloud.define('sum_assets', function(request, response) {
-  Parse.Cloud.useMasterKey();
-  var marginTotals = {};
-  var AssetClass = Parse.Object.extend('Asset');
-  var assetQuery = new Parse.Query(AssetClass);
-  assetQuery.exists('price');
-  assetQuery.find({
-    success: function (assets) {
-      assets.forEach(function(asset, index) {
-        var symbol = asset.get('symbol');
-        var margin = asset.get('amount');
-        if (!(marginTotals.hasOwnProperty(symbol))) {
-          marginTotals[symbol] = margin;
-        } else {
-          marginTotals[symbol] = marginTotals[symbol] + margin;
-        };
-      });
-      response.success(marginTotals);
-    }, error: function (error) {
-      response.error('error querying assets: '+error.code+' '+error.message);
-    }
-  });
+Parse.Cloud.job('sum_assets', function(request, response) {
+  // Parse.Cloud.useMasterKey();
+  // 
+  //
+  // var _ = require("underscore");
+  // // Parse.initialize("YOUR APP ID", "YOUR JAVASCRIPT KEY", "YOUR MASTER KEY");
+  //
+  // // var processPage = function(lastPage) {
+  // //   var words = str.toLowerCase().split(/b/);
+  // //   words = _.filter(words, function(w) { return w.match(/^w+$/); });
+  // //   return words;
+  // // };
+  //
+  // var query = new Parse.Query("Assets");
+  // // query.doesNotExist("cityTokens");
+  // var count = 0;
+  // return query.each(function(event) {
+  //   count++;
+  //   // console.log("Updating object: " + event.id);
+  //   // event.set("cityTokens", tokenize(event.get("city")));
+  //   return count;
+  // });
+  //
+  //
+  // function nextPage(continue, callback) {
+  //   var marginTotals = continue.marginTotals;
+  //   var aum = continue.aum;
+  //   var withdrawn = continue.withdrawn;
+  //   var page = continue.page;
+  //   var AssetClass = Parse.Object.extend('Asset');
+  //   var assetQuery = new Parse.Query(AssetClass);
+  //   assetQuery.limit(1000);
+  //   assetQuery.skip(1000 * page);
+  //   assetQuery.find({
+  //     success: function (assets) {
+  //       assets.forEach(function(asset, index) {
+  //         var symbol = asset.get('symbol');
+  //         var margin = parseFloat(asset.get('amount').toFixed(8));
+  //         aum += margin;
+  //         if ((marginTotals.hasOwnProperty(symbol))) {
+  //           margin = marginTotals[symbol] + margin;
+  //         }
+  //         marginTotals[symbol] = parseFloat(margin.toFixed(8));
+  //         if (margin < 0) {
+  //           withdrawn = withdrawn + margin;
+  //         }
+  //       });
+  //       aum = parseFloat(aum.toFixed(8));
+  //       console.log(assets.length);
+  //       if (assets.count == 1000) {
+  //         page += 1;
+  //         nextPage({
+  //           'aum' : aum,
+  //           'withdrawn' : withdrawn,
+  //           'marginTotals': marginTotals,
+  //           'page' : page
+  //         });
+  //       } else {
+  //         response.success({
+  //           'aum' : aum,
+  //           'withdrawn' : withdrawn,
+  //           'marginTotals' : marginTotals,
+  //           'pages' : pages
+  //         });
+  //       }
+  //     }, error: function (error) {
+  //       response.error('error querying assets: '+error.code+' '+error.message);
+  //     }
+  //   });
+  // }
+  // nextPage({
+  //   'aum' : 0,
+  //   'withdrawn' : 0,
+  //   'marginTotals': {},
+  //   'page' : 0
+  // });
 });
 
 Parse.Cloud.define('blockio_update_transactions', function(request, response) {
@@ -1597,8 +1658,8 @@ Parse.Cloud.define('change_portfolio', function(request, response) {
   Parse.Cloud.useMasterKey();
   var userId = request.params['userId'];
   var portfolioId = request.params['portfolioId'];
-  var symbols = request.params['symbols'];
-  var weights = request.params['weights'];
+  var newSymbols = request.params['symbols'];
+  var newWeights = request.params['weights'];
   Parse.Cloud.run('current_value', {'userId' : userId}, {
     success: function(currentValueData) {
       var UserClass = Parse.Object.extend(Parse.User);
@@ -1608,20 +1669,73 @@ Parse.Cloud.define('change_portfolio', function(request, response) {
       userQuery.first({
         success: function(user) {
           var currentValue = currentValueData['total'];
-          var currentValues
+          var currentValues = currentValueData['values'];
+          var currentSymbols = currentValueData['symbols'];
           var currentPortfolio = user.get('portfolio');
-          var currentSymbols = currentPortfolio.get('symbols');
-          var currentWeights = currentPortfolio.get('weights');
+          var currentPortfolioSymbols = currentPortfolio.get('symbols');
+          var currentPortfolioWeights = currentPortfolio.get('weights');
+          var changes = [];
+          var deleteSymbols = [];
+          var balanceChange = 0;
+          if (newSymbols.length >= currentSymbols.length) {
+            newSymbols.forEach(function(newSymbol, index) {
+              var newWeight = newWeights[index];
+              var newSymbolAmount = newWeight * currentValue;
+              var currentSymbolAmount = 0;
+              if (currentSymbols.indexOf(newSymbol) >= 0) {
+                currentSymbolAmount = currentValues[currentSymbols.indexOf(newSymbol)];
+              } else {
+                deleteSymbols.push(currentSymbol);
+              }
+              var symbolDifference = newSymbolAmount - currentSymbolAmount;
+              balanceChange += symbolDifference;
+              changes.push({
+                'amount' : parseFloat(symbolDifference.toFixed(8)),
+                'symbol' : newSymbol
+              });
+            });
+          } else {
+            currentSymbols.forEach(function(currentSymbol, index) {
+              var currentSymbolAmount = currentValues[currentSymbols.indexOf(currentSymbol)];
+              var newSymbolAmount = 0;
+              if (newSymbols.indexOf(currentSymbol) >= 0) {
+                var newWeight = newWeights[newSymbols.indexOf(currentSymbol)];
+                newSymbolAmount = newWeight * currentValue;
+              } else {
+                deleteSymbols.push(currentSymbol);
+              }
+              var symbolDifference = newSymbolAmount - currentSymbolAmount;
+              balanceChange += symbolDifference;
+              changes.push({
+                'amount' : parseFloat(symbolDifference.toFixed(8)),
+                'symbol' : currentSymbol
+              });
+            });
+          }
 
-
-
+          // var AssetClass = Parse.Object.extend('Asset');
+          // currentSymbols.forEach(function(currentSymbol, index) {
+          //   var asset = new AssetClass();
+          //   asset.set('amount', parseFloat(amount.toFixed(7)));
+          //   asset.set('symbol', symbol);
+          //   asset.set('user', user);
+          //   asset.set('complete', false);
+          //   asset.set('inTransaction', transaction);
+          //   assets.push(asset);
+          // });
+          //
 
           response.success({
-            'currentValue' : currentValue,
+            'currentValue' : parseFloat(currentValue.toFixed(8)),
+            'currentValues' : currentValues,
             'currentSymbols' : currentSymbols,
-            'currentWeights' : currentWeights,
-            'symbols' : symbols,
-            'weights' : weights
+            'currentPortfolioSymbols' : currentPortfolioSymbols,
+            'currentPortfolioWeights' : currentPortfolioWeights,
+            'newSymbols' : newSymbols,
+            'newWeights' : newWeights,
+            'deleteSymbols' : deleteSymbols,
+            'changes' : changes,
+            'balanceChange' : parseFloat(balanceChange.toFixed(8))
           });
         }, error: function(error) {
           response.error(error);
