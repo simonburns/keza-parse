@@ -539,74 +539,76 @@ Parse.Cloud.define('tx_hook', function(request, response) {
 Parse.Cloud.afterSave('Transaction', function(request) {
   Parse.Cloud.useMasterKey();
   var transaction = request.object;
-  var value = parseFloat(transaction.get('balanceChange').toFixed(8));
-  var progress = parseFloat(transaction.get('confirmations')/3);
-  if (value > 0) {
-    if (progress == 1 || progress == 0) {
-      alert = 'Your '+value+' BTC deposit is in progress, check back soon';
-      var name = 'Keza';
-      if (progress == 1) {
-        alert = 'Your '+value+' BTC deposit is complete! It will now be invested' ;
-        name = 'Keza';
-      }
-      // else if (progress > 0)  {
-      //   alert = 'Your'+value+'BTC deposit is in progress.';
-      //   name = value+' BTC Deposit Updated';
-      // };
-      var EventClass = Parse.Object.extend('Event');
-      var eventQuery = new Parse.Query(EventClass);
-      eventQuery.equalTo('transaction', transaction);
-      eventQuery.first({
-        success: function (eventObject) {
-          var user = transaction.get('user');
-          var oldProgress = 0;
-          if (eventObject) {
-            var oldProgress = eventObject.get(progress);
-            eventObject.set('progress', progress);
-            eventObject.set('alert', alert);
-            eventObject.set('name', alert);
-            eventObject.save();
-          } else {
-            var newEvent = new EventClass();
-            newEvent.set('transaction', transaction);
-            newEvent.set('progress', progress);
-            newEvent.set('type', 'deposit');
-            newEvent.set('name', name);
-            newEvent.set('value', value);
-            newEvent.set('read', false);
-            newEvent.set('alert', alert);
-            newEvent.set('user', user);
-            newEvent.save();
-          };
-          if (oldProgress != 1) {
-            var userQuery = new Parse.Query(Parse.User);
-            userQuery.equalTo('objectId', user.id);
-            var pushQuery = new Parse.Query(Parse.Installation);
-            pushQuery.matchesQuery('user', userQuery);
-            Parse.Push.send({
-              where: pushQuery,
-              data: {
-                alert : {
-                  'title' : name,
-                  'body' : alert,
-                  'type' : 'deposit'
-                }
-              }
-            }, {
-              success: function() {
-                console.log('push success: ');
-              },
-              error: function(error) {
-                console.log('push error: '+error);
-              }
-            });
-          } else {
-            console.log('already sent push');
-          }
-        }, error: function (error) {
-          console.error('error querying events: ' + error);
+  if (transaction.get('user')) {
+    var value = parseFloat(transaction.get('balanceChange').toFixed(8));
+    var progress = parseFloat(transaction.get('confirmations')/3);
+    if (value > 0) {
+      if (progress == 1 || progress == 0) {
+        alert = 'Your '+value+' BTC deposit is in progress, check back soon';
+        var name = 'Keza';
+        if (progress == 1) {
+          alert = 'Your '+value+' BTC deposit is complete! It will now be invested' ;
+          name = 'Keza';
         }
-      });
+        // else if (progress > 0)  {
+        //   alert = 'Your'+value+'BTC deposit is in progress.';
+        //   name = value+' BTC Deposit Updated';
+        // };
+        var EventClass = Parse.Object.extend('Event');
+        var eventQuery = new Parse.Query(EventClass);
+        eventQuery.equalTo('transaction', transaction);
+        eventQuery.first({
+          success: function (eventObject) {
+            var user = transaction.get('user');
+            var oldProgress = 0;
+            if (eventObject) {
+              var oldProgress = eventObject.get(progress);
+              eventObject.set('progress', progress);
+              eventObject.set('alert', alert);
+              eventObject.set('name', alert);
+              eventObject.save();
+            } else {
+              var newEvent = new EventClass();
+              newEvent.set('transaction', transaction);
+              newEvent.set('progress', progress);
+              newEvent.set('type', 'deposit');
+              newEvent.set('name', name);
+              newEvent.set('value', value);
+              newEvent.set('read', false);
+              newEvent.set('alert', alert);
+              newEvent.set('user', user);
+              newEvent.save();
+            };
+            if (oldProgress != 1) {
+              var userQuery = new Parse.Query(Parse.User);
+              userQuery.equalTo('objectId', user.id);
+              var pushQuery = new Parse.Query(Parse.Installation);
+              pushQuery.matchesQuery('user', userQuery);
+              Parse.Push.send({
+                where: pushQuery,
+                data: {
+                  alert : {
+                    'title' : name,
+                    'body' : alert,
+                    'type' : 'deposit'
+                  }
+                }
+              }, {
+                success: function() {
+                  console.log('push success: ');
+                },
+                error: function(error) {
+                  console.log('push error: '+error);
+                }
+              });
+            } else {
+              console.log('already sent push');
+            }
+          }, error: function (error) {
+            console.error('error querying events: ' + error);
+          }
+        });
+      }
     }
   }
 });
@@ -978,7 +980,7 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
               'amount' : parseFloat(totalAmount.toFixed(7)),
               'toAddress' : toAddress
             };
-            Parse.Cloud.run('n3ru80fv7bv08147f3fubfiuvbb3r93bhf98he92w', withdraw, {
+            Parse.Cloud.run('blockio_withdraw_user', withdraw, {
               success: function (coinbaseWithdraw) {
                 var transactionId = coinbaseWithdraw.txn.id
                 var newAssets = [];
@@ -1088,6 +1090,62 @@ Parse.Cloud.define('blockio_withdraw', function(request, response) {
   console.log(amount + ', to: ' + toAddress);
   Parse.Cloud.httpRequest({
     url: 'https://block.io/api/v2/withdraw/?api_key='+blockApiKey+'&amounts='+amount+'&to_addresses='+toAddress+'&pin='+blockApiPin,
+    success: function (withdrawResponse) {
+      var withdrawData = withdrawResponse.data;
+      var status = withdrawData.status;
+      var network = withdrawData.data.network;
+      var transactionId = withdrawData.data.txid;
+      var amountWithdrawn = withdrawData.data.amount_withdrawn;
+      var amountSent = withdrawData.data.amount_sent;
+      var networkFee = withdrawData.data.network_fee;
+      var blockioFee = withdrawData.data.blockio_fee;
+      var TransactionClass = Parse.Object.extend('Transaction');
+      var transactionQuery = new Parse.Query(TransactionClass);
+      transactionQuery.equalTo('transactionId', transactionId);
+      transactionQuery.find({
+        success: function (transactions) {
+          var transaction;
+          if(transactions.length === 0) {
+            transaction = new TransactionClass();
+            transaction.set('transactionId', transactionId);
+            transaction.set('network', network);
+            transaction.set('amountWithdrawn', parseFloat(amountWithdrawn));
+            transaction.set('networkFee', parseFloat(networkFee));
+            transaction.set('blockioFee', parseFloat(blockioFee));
+          } else {
+            transaction = transactions[0];
+            transaction.set('network', network);
+            transaction.set('amountWithdrawn', parseFloat(amountWithdrawn));
+            transaction.set('networkFee', parseFloat(networkFee));
+            transaction.set('blockioFee', parseFloat(blockioFee));
+          };
+          transaction.save(null, {
+            success: function (savedTransaction) {
+              response.success({
+                'withdrawal' : withdrawData,
+                'transaction' : transaction,
+              });
+            }, error: function (error) {
+              response.error('error saving transaction: '+error.message);
+            }
+          });
+        }, error: function (error) {
+          response.error('error querying transactions: '+error.code+' '+error.message);
+        }
+      });
+    }, error: function (error) {
+      console.log(error.data);
+      response.error(error);
+    }
+  });
+});
+
+Parse.Cloud.define('blockio_withdraw_user', function(request, response) {
+  Parse.Cloud.useMasterKey();
+  var amount = parseFloat(request.params['amount'].toFixed(7));
+  var toAddress = request.params['toAddress'];
+  Parse.Cloud.httpRequest({
+    url: 'https://block.io/api/v2/withdraw/?api_key='+blockApiKey+'&from_addresses=35N8aom5dNDTon1JzuXBLiUufGK24KUakU&amounts='+amount+'&to_addresses='+toAddress+'&pin='+blockApiPin,
     success: function (withdrawResponse) {
       var withdrawData = withdrawResponse.data;
       var status = withdrawData.status;
@@ -1419,7 +1477,7 @@ Parse.Cloud.job('broker_positions', function(request, response) {
           });
           Parse.Object.saveAll(assets, {
             success: function (savedAssets) {
-              response.success('succesfully matched positionIds');
+              response.success('succesfully matched '+ positions.length +' positionIds');
             },
             error: function (assetSaveError) {
               response.error('error saving assets: '+assetSaveError.message);
@@ -1434,6 +1492,122 @@ Parse.Cloud.job('broker_positions', function(request, response) {
     }
   });
 });
+
+
+
+
+
+Parse.Cloud.define('status', function(request, response) {
+  Parse.Cloud.run('broker_summary', {}, {
+    success: function (brokerSummary) {
+      Parse.Cloud.run('broker_quotes', {'symbols' : brokerSummary.symbols}, {
+        success: function (brokerQuotes) {
+          Parse.Cloud.run('parse_summary', {'brokerQuotes' : brokerQuotes}, {
+            success: function (parseSummary) {
+              var assetMargins = parseSummary.assetMargins;
+              var symbolMargins = brokerSummary.symbolMargins;
+              var deltaMargins = {};
+              Object.keys(assetMargins).forEach(function (symbol) {
+                var assetMargin = assetMargins[symbol];
+                var symbolMargin = symbolMargins[symbol];
+                var deltaMargin = parseFloat((assetMargin - symbolMargin).toFixed(8));
+                deltaMargins[symbol] = deltaMargin;
+              });
+              response.success({
+                'brokerSummary' : brokerSummary,
+                'parseSummary' : parseSummary,
+                'deltaMargins' : deltaMargins
+              });
+            }, error: function (error) {
+              response.error(error);
+            }
+          });
+        }, error: function (error) {
+          response.error(error);
+        }
+      });
+    }, error: function (error) {
+      response.error(error);
+    }
+  });
+});
+
+Parse.Cloud.define('broker_summary', function(request, response) {
+  Parse.Cloud.httpRequest({
+    url: 'https://1broker.com/api/v1/position/list_open.php?token='+brokerToken,
+    success: function (positionsResponse) {
+      var positions = positionsResponse.data.response;
+      var totalMargin = 0;
+      var totalValue = 0;
+      var symbolMargins = {};
+      var symbolValues = {};
+      var symbols = [];
+      positions.forEach(function (position, index) {
+        var symbol = position['symbol'].toString();
+        var margin = parseFloat(position['margin']);
+        var value = parseFloat(position['value']);
+        totalMargin = parseFloat((totalMargin + margin).toFixed(8));
+        totalValue = parseFloat((totalValue + value).toFixed(8));
+        if ((symbolMargins.hasOwnProperty(symbol))) {
+          margin = symbolMargins[symbol] + margin;
+          value = symbolValues[symbol] + value;
+        } else {
+          symbols.push(symbol);
+        }
+        symbolMargins[symbol] = parseFloat(margin.toFixed(8));
+        symbolValues[symbol] = parseFloat(value.toFixed(8));
+      });
+      Parse.Cloud.run('bfx_balances', {}, {
+        success: function (bfxStatus) {
+          var bfxValue = parseFloat(bfxStatus[0]['amount']);
+          symbolValues['BTCJ'] = parseFloat(bfxValue.toFixed(8));
+          totalValue = parseFloat((totalValue + bfxValue).toFixed(8));
+          // use bfx_history to get proper margin
+          symbolMargins['BTCJ'] = parseFloat(bfxValue.toFixed(8));
+          totalMargin = parseFloat((totalMargin + bfxValue).toFixed(8));
+
+          var totalProfit = parseFloat((totalValue - totalMargin).toFixed(8))
+          response.success({
+            'symbols' : symbols,
+            'symbolMargins' : symbolMargins,
+            'symbolValues' : symbolValues,
+            'totalValue' : totalValue,
+            'totalMargin' : totalMargin,
+            'bfxStatus' : bfxStatus,
+            'totalProfit' : totalProfit
+          });
+        }, error: function (error) {
+          response.error(error);
+        }
+      });
+    }, error: function(error) {
+      response.error('error getting broker positions: ' + error.message);
+    }
+  });
+});
+
+Parse.Cloud.define('broker_quotes', function(request, response) {
+  // Get quotes for unique symbols (max 20 unique symbols!)
+  var symbols = request.params.symbols;
+  Parse.Cloud.httpRequest({
+    url: 'https://1broker.com/api/v1/market/quotes.php?symbols='+symbols.toString()+'&token='+brokerToken+'&pretty=1',
+    success: function (quotes) {
+      if (quotes.data.response) {
+        var quotesArray = quotes.data.response;
+        var brokerQuotes = {};
+        quotesArray.forEach(function (quote, index) {
+          brokerQuotes[quote.symbol] = quote;
+        });
+        response.success(brokerQuotes);
+      } else {
+        response.error('error getting quotes: '+uniqueSymbols.toString());
+      };
+    }, error: function (error) {
+      response.error('error getting quotes: '+error.code+' '+error.message);
+    }
+  });
+});
+
 
 // Parse.Cloud.afterSave('Event', function(request) {
 //   // Parse.Cloud.useMasterKey();
@@ -1453,83 +1627,62 @@ Parse.Cloud.job('broker_positions', function(request, response) {
 
 // Not being used atm
 //  Sums up all priced assets (needs paging added!)
-Parse.Cloud.job('sum_assets', function(request, response) {
-  // Parse.Cloud.useMasterKey();
-  // 
-  //
-  // var _ = require("underscore");
-  // // Parse.initialize("YOUR APP ID", "YOUR JAVASCRIPT KEY", "YOUR MASTER KEY");
-  //
-  // // var processPage = function(lastPage) {
-  // //   var words = str.toLowerCase().split(/b/);
-  // //   words = _.filter(words, function(w) { return w.match(/^w+$/); });
-  // //   return words;
-  // // };
-  //
-  // var query = new Parse.Query("Assets");
-  // // query.doesNotExist("cityTokens");
-  // var count = 0;
-  // return query.each(function(event) {
-  //   count++;
-  //   // console.log("Updating object: " + event.id);
-  //   // event.set("cityTokens", tokenize(event.get("city")));
-  //   return count;
-  // });
-  //
-  //
-  // function nextPage(continue, callback) {
-  //   var marginTotals = continue.marginTotals;
-  //   var aum = continue.aum;
-  //   var withdrawn = continue.withdrawn;
-  //   var page = continue.page;
-  //   var AssetClass = Parse.Object.extend('Asset');
-  //   var assetQuery = new Parse.Query(AssetClass);
-  //   assetQuery.limit(1000);
-  //   assetQuery.skip(1000 * page);
-  //   assetQuery.find({
-  //     success: function (assets) {
-  //       assets.forEach(function(asset, index) {
-  //         var symbol = asset.get('symbol');
-  //         var margin = parseFloat(asset.get('amount').toFixed(8));
-  //         aum += margin;
-  //         if ((marginTotals.hasOwnProperty(symbol))) {
-  //           margin = marginTotals[symbol] + margin;
-  //         }
-  //         marginTotals[symbol] = parseFloat(margin.toFixed(8));
-  //         if (margin < 0) {
-  //           withdrawn = withdrawn + margin;
-  //         }
-  //       });
-  //       aum = parseFloat(aum.toFixed(8));
-  //       console.log(assets.length);
-  //       if (assets.count == 1000) {
-  //         page += 1;
-  //         nextPage({
-  //           'aum' : aum,
-  //           'withdrawn' : withdrawn,
-  //           'marginTotals': marginTotals,
-  //           'page' : page
-  //         });
-  //       } else {
-  //         response.success({
-  //           'aum' : aum,
-  //           'withdrawn' : withdrawn,
-  //           'marginTotals' : marginTotals,
-  //           'pages' : pages
-  //         });
-  //       }
-  //     }, error: function (error) {
-  //       response.error('error querying assets: '+error.code+' '+error.message);
-  //     }
-  //   });
-  // }
-  // nextPage({
-  //   'aum' : 0,
-  //   'withdrawn' : 0,
-  //   'marginTotals': {},
-  //   'page' : 0
-  // });
-});
+// Parse.Cloud.job('sum_assets', function(request, response) {
+//   Parse.Cloud.useMasterKey();
+//
+//   function nextPage(continue, callback) {
+//     var marginTotals = continue.marginTotals;
+//     var aum = continue.aum;
+//     var withdrawn = continue.withdrawn;
+//     var page = continue.page;
+//     var AssetClass = Parse.Object.extend('Asset');
+//     var assetQuery = new Parse.Query(AssetClass);
+//     assetQuery.limit(1000);
+//     assetQuery.skip(1000 * page);
+//     assetQuery.find({
+//       success: function (assets) {
+//         assets.forEach(function(asset, index) {
+//           var symbol = asset.get('symbol');
+//           var margin = parseFloat(asset.get('amount').toFixed(8));
+//           aum += margin;
+//           if ((marginTotals.hasOwnProperty(symbol))) {
+//             margin = marginTotals[symbol] + margin;
+//           }
+//           marginTotals[symbol] = parseFloat(margin.toFixed(8));
+//           if (margin < 0) {
+//             withdrawn = withdrawn + margin;
+//           }
+//         });
+//         aum = parseFloat(aum.toFixed(8));
+//         console.log(assets.length);
+//         if (assets.count == 1000) {
+//           page += 1;
+//           nextPage({
+//             'aum' : aum,
+//             'withdrawn' : withdrawn,
+//             'marginTotals': marginTotals,
+//             'page' : page
+//           });
+//         } else {
+//           response.success({
+//             'aum' : aum,
+//             'withdrawn' : withdrawn,
+//             'marginTotals' : marginTotals,
+//             'pages' : pages
+//           });
+//         }
+//       }, error: function (error) {
+//         response.error('error querying assets: '+error.code+' '+error.message);
+//       }
+//     });
+//   }
+//   nextPage({
+//     'aum' : 0,
+//     'withdrawn' : 0,
+//     'marginTotals': {},
+//     'page' : 0
+//   });
+// });
 
 Parse.Cloud.define('blockio_update_transactions', function(request, response) {
   Parse.Cloud.httpRequest({
@@ -1597,7 +1750,6 @@ Parse.Cloud.define('archive_addresses', function(request, response) {
               deleteAddresses.push(addressAddress);
             }
           });
-
           response.success({
             'allAddresses' : allAddresses,
             'userAddresses' : addresses,
