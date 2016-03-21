@@ -436,7 +436,6 @@ Parse.Cloud.define('tx_hook', function(request, response) {
           transaction.set('balanceChange', parseFloat(balanceChange));
           transaction.set('confirmations', confirmations);
           transaction.set('address', address);
-          transaction.save();
           var complete = transaction.get('complete');
           if (balanceChange > 0) {
             if (confirmations == 3 && complete == false) {
