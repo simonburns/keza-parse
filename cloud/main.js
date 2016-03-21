@@ -1178,8 +1178,10 @@ Parse.Cloud.define('blockio_withdraw_user', function(request, response) {
           transaction.save(null, {
             success: function (savedTransaction) {
               response.success({
-                'withdrawal' : withdrawData,
-                'transaction' : transaction,
+                "toAddress": toAddress,
+                "amount": amount,
+                "txn": savedTransaction,
+                'withdrawal' : withdrawData
               });
             }, error: function (error) {
               response.error('error saving transaction: '+error.message);
