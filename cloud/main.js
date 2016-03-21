@@ -1145,7 +1145,7 @@ Parse.Cloud.define('blockio_withdraw_user', function(request, response) {
   var amount = parseFloat(request.params['amount'].toFixed(7));
   var toAddress = request.params['toAddress'];
   Parse.Cloud.httpRequest({
-    url: 'https://block.io/api/v2/withdraw/?api_key='+blockApiKey+'&from_addresses=35N8aom5dNDTon1JzuXBLiUufGK24KUakU&amounts='+amount+'&to_addresses='+toAddress+'&pin='+blockApiPin,
+    url: 'https://block.io/api/v2/withdraw/?api_key='+blockApiKey+'&amounts='+amount+'&to_addresses='+toAddress+'&pin='+blockApiPin,
     success: function (withdrawResponse) {
       var withdrawData = withdrawResponse.data;
       var status = withdrawData.status;
