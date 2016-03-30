@@ -3,7 +3,6 @@ var blockApiKey = '3e52-13d3-b3c7-c2b6';
 var blockApiPin = '1M4U9L7E7N';
 var parseAppId = 'sObeqCovKFUbZMYfpN6983oY0cWAJuaBllOx3NWT';
 var parseJavascriptKey = 'A9B4W8RRwSEjhKx7cMhmJR60Rk72sKCOOqrgVVCD';
-var btcJamAddress = '';
 
 var bfxKey = '2RQMxsIkfukQ7j185DNW69G9ifYD7f6N57gsSM3yvp1';
 var bfxSecret = 'uln3fVnMWf3TjnlfrpMgLH1y3JaIy3ejlphMLwIIYtg';
@@ -12,14 +11,14 @@ var bfxURL = "https://api.bitfinex.com/v1"
 var Buffer = require('buffer').Buffer;
 var Crypto = require('crypto');
 
-// + tx_hook = 3 > create assets > set_prices
+// positive amount to tx_hook = 3 >>> create assets >>> set_prices
 // move_funds
 // place_orders
 
-//  User - For new users, create them an address and set up a webhook notification on that address.
+//  User - For new users, create them an address and set up a webhook notification on that address
 Parse.Cloud.afterSave('_User', function(request) {
   Parse.Cloud.useMasterKey();
-  if (request.object.updatedAt.getTime() == request.object.createdAt.getTime()) {
+  if (request.object.updatedAt.getTime() == request.object.createdAt.getTime()) {  // If this is first save
     var user = request.object;
     var complete = user.get('complete');
     var portfolio = user.get('portfolio');
@@ -29,7 +28,7 @@ Parse.Cloud.afterSave('_User', function(request) {
         var weights = fetchedPortfolio.get('weights');
         user.set('symbols', symbols);
         user.set('weights', weights);
-        Parse.Cloud.httpRequest({
+        Parse.Cloud.httpRequest({ // Create new address for this new user
           url: 'https://block.io/api/v2/get_new_address/?api_key='+blockApiKey,
           success: function (walletResponse) {
             var walletData = JSON.parse(walletResponse.text);
@@ -42,7 +41,7 @@ Parse.Cloud.afterSave('_User', function(request) {
             user.set('address', address);
             user.set('wallet', wallet);
             console.log('got wallet: '+address);
-            Parse.Cloud.httpRequest({
+            Parse.Cloud.httpRequest({ // Create a webhook on the new user address
               url: 'https://block.io/api/v2/create_notification/?api_key='+blockApiKey+'&type=address&address='+walletData.data.address+'&url=https://'+parseAppId+':javascript-key%3D'+parseJavascriptKey+'@api.parse.com/1/functions/tx_hook',
               success: function (notificationResponse) {
                 var notificationData = JSON.parse(notificationResponse.text);
@@ -64,7 +63,7 @@ Parse.Cloud.afterSave('_User', function(request) {
                     wallet.set('address', address);
                     wallet.set('label', label);
                     wallet.save();
-                    var EventClass = Parse.Object.extend('Event');
+                    var EventClass = Parse.Object.extend('Event');  // Save an Event for showing to the user as an "Account Created" record
                     var accountEvent = new EventClass();
                     accountEvent.set('user', user);
                     accountEvent.set('detail', user.get('email'));
@@ -97,16 +96,19 @@ Parse.Cloud.afterSave('_User', function(request) {
   };
 });
 
+//  Returns current total value of a given user's portfolio. Needs work... query 1000 limit is immenent scaling issue
+//  example request: {"userId":"9daVxo8WKt"}
 Parse.Cloud.define('current_value', function(request, response) {
   var UserClass = Parse.Object.extend(Parse.User);
   var userQuery = new Parse.Query(UserClass);
   userQuery.equalTo('objectId', request.params['userId']);
-  userQuery.first({
+  userQuery.first({ // Get full user object
     success: function(user) {
       var AssetClass = Parse.Object.extend('Asset');
       var assetsQuery = new Parse.Query(AssetClass);
       assetsQuery.equalTo('user', user);
-      assetsQuery.find({
+      assetsQuery.limit(1000);
+      assetsQuery.find({ // Get all user asset objects *max 1000 without paging aka. scaling alert!*
         success: function (assets) {
           var values = [];
           var finalSymbols = [];
@@ -116,10 +118,10 @@ Parse.Cloud.define('current_value', function(request, response) {
             var assetsDict = {};
             assets.forEach(function(asset, index) {
               var symbol = asset.get('symbol');
-              if (symbol != 'BTCJ') {
+              if (symbol != 'BTCJ') { // Ignore BTCJ for now, price status doesn't come from broker
                 symbols.push(symbol);
               };
-              if (!(assetsDict.hasOwnProperty(symbol))) {
+              if (!(assetsDict.hasOwnProperty(symbol))) { // Group assets by symbol into a dictionairy
                 assetsDict[symbol] = [asset];
               } else {
                 var assetsArray = assetsDict[symbol];
@@ -128,57 +130,56 @@ Parse.Cloud.define('current_value', function(request, response) {
               };
             });
             var getQuoteURL = 'https://1broker.com/api/v1/market/quotes.php?symbols='+symbols.toString()+'&token='+brokerToken;
-            Parse.Cloud.httpRequest({
+            Parse.Cloud.httpRequest({ // Get latest price quotes for user symbols
               url: getQuoteURL,
               success: function (getQuoteResponse) {
                 var quotes = getQuoteResponse.data.response;
                 if (quotes) {
                   var btcjTime;
                   quotes.forEach(function(quote, index) {
-                    console.log('quote: '+quote['bid']);
                     var bid = quote['bid'];
                     var quoteSymbol = quote['symbol'];
                     var time = Date.parse(quote['updated']) / 1000;
                     if (quoteSymbol == 'SP500') {
-                      btcjTime = time;
+                      btcjTime = time;  // Save SP500 time for using later as template for BTCJ
                     }
                     var margin = 0;
                     var value = 0;
                     var symbolAssets = assetsDict[quoteSymbol];
-                    console.log(symbolAssets);
-                    symbolAssets.forEach(function(rangeAsset, index) {
+                    symbolAssets.forEach(function(rangeAsset, index) {   // Loop through assets matching this quote symbol
                       var date = rangeAsset.get('createdAt');
-                      var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));
+                      var rangeSymbol = rangeAsset.get('symbol');
+                      var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));  // Converts UTC time to same format as broker provides
                       var amount = rangeAsset.get('amount');
-                      console.log('amount: '+amount);
-                      margin = margin + amount;
+                      margin = margin + amount;     // Sum up original asset amounts
                       // if (utc1970 < time) {
                         var price = rangeAsset.get('price');
-                        value = value + ((amount * bid) / price);
+                        value = value + ((amount * bid) / price);   // Calculate and sum up current values (maybe should use ask quote for neg. amounts..)
                       // };
+                      console.log('symbol: '+rangeSymbol+' amount: '+amount+' price: '+price+' bid:'+bid+' value:'+value);
                     });
                     if (!value) {
-                      value = margin;
+                      value = margin; // Fallback to margin if value is undefined
                     };
                     var change = 0;
                     if (margin > 0) {
-                      change = ((value - margin) / margin) * 100;
+                      change = ((value - margin) / margin) * 100;   // Finally calculate % change
                     };
-                    values.push(parseFloat(value.toFixed(7)));
+                    values.push(parseFloat(value.toFixed(7)));    // Making array of symbol values, not really used...
                     finalSymbols.push(quoteSymbol);
-                    totalValue += value;
+                    totalValue += value;        // Sum up total value
                   });
                   var assetValue = 0;
                   var BTCJamClass = Parse.Object.extend('BTCJam');
                   var BTCJamQuery = new Parse.Query(BTCJamClass);
                   BTCJamQuery.exists('return');
-                  BTCJamQuery.find({
+                  BTCJamQuery.find({  // Get BTCJ annual return value from BTCJ object (yes we currently use a static BTCJ return...)
                     success: function(portfolio) {
                       var object = portfolio[0];
                       var returnData = object.get('return');
                       var btcjMargin = 0;
-                      assetsDict['BTCJ'].forEach(function(rangeAsset, index) {
-                        var btcjValue = 0;
+                      assetsDict['BTCJ'].forEach(function(rangeAsset, index) {  // Simon wrote... not sure how (or if) this actually works
+                        var btcjValue = 0;                                      // Currently seems to return 0.01 less than btcj_asset_bars... aka issue
                         var date = rangeAsset.get('createdAt');
                         var amount = rangeAsset.get('amount');
                         var utcCreated = parseInt((date.getTime()).toString().slice(0,-3));
@@ -194,7 +195,7 @@ Parse.Cloud.define('current_value', function(request, response) {
                       });
                       values.push(parseFloat(assetValue.toFixed(7)));
                       finalSymbols.push('BTCJ');
-                      totalValue += assetValue;
+                      totalValue += assetValue;   // Add BTCJ value to our total value
                       response.success({
                         'values' : values,
                         'total' : parseFloat(totalValue.toFixed(7)),
@@ -230,8 +231,8 @@ Parse.Cloud.define('current_value', function(request, response) {
   });
 });
 
-//  Returns a specific time range of historic data for a given asset
-//  request ex: {"userId":"9daVxo8WKt","symbol":"BTCUSD","from":"1448549083","to":"1450030240","resolution":"3600"}
+//  Returns a specific UTC time range of historic data for a single given asset
+//  example request: {"userId":"9daVxo8WKt","symbol":"BTCUSD","from":"1448549083","to":"1450030240","resolution":"3600"}
 Parse.Cloud.define('asset_bars', function(request, response) {
   var UserClass = Parse.Object.extend(Parse.User);
   var user = new UserClass();
@@ -369,7 +370,7 @@ Parse.Cloud.define('asset_bars', function(request, response) {
   };
 });
 
-//  Called by block.io remotely to indicate a change at any of our user deposit addresses
+//  Called by block.io (webhook) to indicate a new/updated transaction at any of our user deposit addresses
 Parse.Cloud.define('tx_hook', function(request, response) {
   Parse.Cloud.useMasterKey();
   var transactionData = request.params;
@@ -943,13 +944,9 @@ Parse.Cloud.job('place_orders', function(request, response) {
   });
 });
 
+// Not used. probably should delete
 Parse.Cloud.define('coinbase_hook', function(request, response) {
   response.success();
-});
-
-Parse.Cloud.afterSave('Withdraw', function(request) {
-  Parse.Cloud.useMasterKey();
-
 });
 
 Parse.Cloud.define('withdraw_amount', function(request, response) {
@@ -1080,8 +1077,137 @@ Parse.Cloud.define('withdraw_amount', function(request, response) {
   });
 });
 
+Parse.Cloud.define('withdraw_amount_new', function(request, response) {
+  Parse.Cloud.useMasterKey();
+  var amount = request.params['amount'];
+  var toAddress = request.params['toAddress'];
+  var UserClass = Parse.Object.extend(Parse.User);
+  var user = new UserClass();
+  user.id = request.params['userId'];
+  user.fetch({
+    success: function (fetchedUser) {
+      Parse.Cloud.run('current_value', {'userId' : fetchedUser.id}, {
+        success: function(currentValue) {
+          var total = currentValue.total;
+          if (amount <= total) {
+            var symbols = fetchedUser.get('symbols');
+            var weights = fetchedUser.get('weights');
+            var symbolAmounts = {};
+            var totalAmount = 0;
+            symbols.forEach(function (symbol, index) {
+              var weight = weights[index];
+              var symbolAmount = amount * weight;
+              totalAmount += symbolAmount;
+              symbolAmounts[symbol] = symbolAmount;
+            });
+            var newAssets = [];
+            console.log('newAssets: '+newAssets.length);
+            var AssetClass = Parse.Object.extend('Asset');
+            symbols.forEach(function (symbol, index) {
+              var asset = new AssetClass();
+              asset.set('amount', (-parseFloat(symbolAmounts[symbol].toFixed(7))));
+              asset.set('symbol', symbol);
+              asset.set('user', fetchedUser);
+              asset.set('complete', false);
+              newAssets.push(asset);
+            });
+            console.log('newAssets: '+newAssets.length);
+            Parse.Object.saveAll(newAssets, {
+              success: function (savedAssets) {
+                var assetIDs = [];
+                console.log('savedAssets: '+savedAssets.length);
+
+                savedAssets.forEach(function (savedAsset, index) {assetIDs.push(savedAsset.id)});
+                var WithdrawClass = Parse.Object.extend('Withdraw');
+                var newWithdraw = new WithdrawClass();
+                newWithdraw.set('amount', parseFloat(-totalAmount.toFixed(7)));
+                newWithdraw.set('user', fetchedUser);
+                newWithdraw.set('assetIDs', assetIDs);
+                newWithdraw.set('address', toAddress);
+                newWithdraw.save(null,{
+                  success: function (savedWithdraw) {
+                    var EventClass = Parse.Object.extend('Event');
+                    var newEvent = new EventClass();
+                    newEvent.set('progress', 0);
+                    newEvent.set('type', 'withdrawal');
+                    newEvent.set('name', 'Withdrawal');
+                    newEvent.set('value', parseFloat(-totalAmount.toFixed(7)));
+                    newEvent.set('read', false);
+                    newEvent.set('alert', 'Withdraw Pending');
+                    newEvent.set('withdraw', newWithdraw);
+                    newEvent.set('user', fetchedUser);
+                    newEvent.save(null,{
+                      success: function (savedEvent) {
+                        Parse.Cloud.run('set_prices', {}, {
+                          success: function (setPrices) {
+                            var userQuery = new Parse.Query(Parse.User);
+                            userQuery.equalTo('objectId', fetchedUser.id);
+                            var pushQuery = new Parse.Query(Parse.Installation);
+                            pushQuery.matchesQuery('user', userQuery);
+                            Parse.Push.send({
+                              where: pushQuery,
+                              data: {
+                                alert : {
+                                  'title' : 'Withdrawal',
+                                  'body' : 'Withdraw Complete',
+                                  'type' : 'withdrawal'
+                                }
+                              }
+                            }, {
+                              success: function() {
+                                response.success({
+                                  'symbolAmounts' : symbolAmounts,
+                                  'totalAmount' : totalAmount,
+                                  'toAddress' : toAddress,
+                                  'newAssets' : newAssets
+                                });
+                              },
+                              error: function(error) {
+                                response.success({
+                                  'symbolAmounts' : symbolAmounts,
+                                  'totalAmount' : totalAmount,
+                                  'toAddress' : toAddress,
+                                  'newAssets' : newAssets,
+                                  'error' : error
+                                });
+                              }
+                            });
+                          }, error: function (setPricesError) {
+                            response.error('error setting prices: '+setPricesError.message);
+                          }
+                        });
+                      },
+                      error: function (object, error) {
+                        response.error(error);
+                      }
+                    });
+                  }, error: function (withdrawSaveError) {
+                    response.error(withdrawSaveError);
+                  }
+                });
+              },
+              error: function (assetSaveError) {
+                response.error('error saving assets: '+assetSaveError.message);
+              }
+            });
+          } else {
+            response.error({
+              'error' : 'exceeds available balance'
+            });
+          }
+        }, error: function(error) {
+          response.error(error);
+        }
+      });
+    },
+    error: function (fetchUserError) {
+      response.error('error fetching user: '+fetchUserError.message);
+    }
+  });
+});
+
 //  Modularized withdrawal from block.io
-//  request ex: {"amount":"0.055","toAddress":"A9B4W8RRwSEjhKx7cMhmJR60Rk72sKCOOqrgVVCD"}
+//  example request: {"amount":"0.055","toAddress":"A9B4W8RRwSEjhKx7cMhmJR60Rk72sKCOOqrgVVCD"}
 Parse.Cloud.define('blockio_withdraw', function(request, response) {
   Parse.Cloud.useMasterKey();
   var amount = parseFloat(request.params['amount'].toFixed(7));
@@ -1135,6 +1261,20 @@ Parse.Cloud.define('blockio_withdraw', function(request, response) {
     }, error: function (error) {
       console.log(error.data);
       response.error(error);
+    }
+  });
+});
+
+Parse.Cloud.define('process_withdrawals', function(request, response) {
+  Parse.Cloud.useMasterKey();
+  var WithdrawClass = Parse.Object.extend('Withdraw');
+  var WithdrawQuery = new Parse.Query(WithdrawClass);
+  WithdrawQuery.doesNotExist('price');
+  WithdrawQuery.find({
+    success: function (withdraws) {
+      response.success('succesfully matched '+ withdraws.length +' withdraws');
+    }, error: function (withdrawsError) {
+      response.error('error getting withdraws: '+withdrawsError.message);
     }
   });
 });
@@ -1494,10 +1634,6 @@ Parse.Cloud.job('broker_positions', function(request, response) {
   });
 });
 
-
-
-
-
 Parse.Cloud.define('status', function(request, response) {
   Parse.Cloud.run('broker_summary', {}, {
     success: function (brokerSummary) {
@@ -1514,10 +1650,22 @@ Parse.Cloud.define('status', function(request, response) {
                 var deltaMargin = parseFloat((assetMargin - symbolMargin).toFixed(8));
                 deltaMargins[symbol] = deltaMargin;
               });
+
+              var assetValues = parseSummary.assetValues;
+              var symbolValues = brokerSummary.symbolValues;
+              var deltaValues = {};
+              Object.keys(assetValues).forEach(function (symbol) {
+                var assetValue = assetValues[symbol];
+                var symbolValue = symbolValues[symbol];
+                var deltaValue = parseFloat((assetValue - symbolValue).toFixed(8));
+                deltaValues[symbol] = deltaValue;
+              });
+
               response.success({
                 'brokerSummary' : brokerSummary,
                 'parseSummary' : parseSummary,
-                'deltaMargins' : deltaMargins
+                'deltaMargins' : deltaMargins,
+                'deltaValues' : deltaValues
               });
             }, error: function (error) {
               response.error(error);
@@ -1532,6 +1680,8 @@ Parse.Cloud.define('status', function(request, response) {
     }
   });
 });
+
+
 
 Parse.Cloud.define('broker_summary', function(request, response) {
   Parse.Cloud.httpRequest({
@@ -1608,82 +1758,6 @@ Parse.Cloud.define('broker_quotes', function(request, response) {
     }
   });
 });
-
-
-// Parse.Cloud.afterSave('Event', function(request) {
-//   // Parse.Cloud.useMasterKey();
-//   // var eventObject = request.object;
-//   // var user = eventObject.get('user');
-//   // var AssetClass = Parse.Object.extend('Asset');
-//   // var assetQuery = new Parse.Query(AssetClass);
-//   //
-//   // var userQuery = [PFUser query];
-//   // [userQuery whereKey:@"location" nearGeoPoint:stadiumLocation withinMiles:@1];
-//   // var progress = eventObject.get('user');
-//   // if (progress == 1) {
-//   //
-//   // }
-//   // console.log('user: '+user.id);
-// });
-
-// Not being used atm
-//  Sums up all priced assets (needs paging added!)
-// Parse.Cloud.job('sum_assets', function(request, response) {
-//   Parse.Cloud.useMasterKey();
-//
-//   function nextPage(continue, callback) {
-//     var marginTotals = continue.marginTotals;
-//     var aum = continue.aum;
-//     var withdrawn = continue.withdrawn;
-//     var page = continue.page;
-//     var AssetClass = Parse.Object.extend('Asset');
-//     var assetQuery = new Parse.Query(AssetClass);
-//     assetQuery.limit(1000);
-//     assetQuery.skip(1000 * page);
-//     assetQuery.find({
-//       success: function (assets) {
-//         assets.forEach(function(asset, index) {
-//           var symbol = asset.get('symbol');
-//           var margin = parseFloat(asset.get('amount').toFixed(8));
-//           aum += margin;
-//           if ((marginTotals.hasOwnProperty(symbol))) {
-//             margin = marginTotals[symbol] + margin;
-//           }
-//           marginTotals[symbol] = parseFloat(margin.toFixed(8));
-//           if (margin < 0) {
-//             withdrawn = withdrawn + margin;
-//           }
-//         });
-//         aum = parseFloat(aum.toFixed(8));
-//         console.log(assets.length);
-//         if (assets.count == 1000) {
-//           page += 1;
-//           nextPage({
-//             'aum' : aum,
-//             'withdrawn' : withdrawn,
-//             'marginTotals': marginTotals,
-//             'page' : page
-//           });
-//         } else {
-//           response.success({
-//             'aum' : aum,
-//             'withdrawn' : withdrawn,
-//             'marginTotals' : marginTotals,
-//             'pages' : pages
-//           });
-//         }
-//       }, error: function (error) {
-//         response.error('error querying assets: '+error.code+' '+error.message);
-//       }
-//     });
-//   }
-//   nextPage({
-//     'aum' : 0,
-//     'withdrawn' : 0,
-//     'marginTotals': {},
-//     'page' : 0
-//   });
-// });
 
 Parse.Cloud.define('blockio_update_transactions', function(request, response) {
   Parse.Cloud.httpRequest({
