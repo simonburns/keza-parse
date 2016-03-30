@@ -241,9 +241,9 @@ Parse.Cloud.define('asset_bars', function(request, response) {
   var from = request.params['from'];
   var to = request.params['to'];
   var resolution = request.params['resolution'];
-  if (symbol != 'BTCJ') { // Start by getting historic symbol data from broker to use as template
+  if (symbol != 'BTCJ') { // Skip this and use seperate function if symbol is BTCJ
     var getBarsURL = 'https://1broker.com/api/v1/market/get_bars.php?symbol='+symbol+'&from='+from+'&to='+to+'&resolution='+resolution+'&token='+brokerToken;
-    Parse.Cloud.httpRequest({
+    Parse.Cloud.httpRequest({ // Start by getting historic symbol data "bars" from broker to use as template
       url: getBarsURL,
       success: function (getBarsResponse) {
         var bars = getBarsResponse.data.response;
@@ -251,22 +251,22 @@ Parse.Cloud.define('asset_bars', function(request, response) {
         var assetsQuery = new Parse.Query(AssetClass);
         assetsQuery.equalTo('user', user);
         assetsQuery.equalTo('symbol', symbol);
-        assetsQuery.find({  // Get all assets of given symbol
+        assetsQuery.find({  // Get all user's assets for the given symbol
           success: function (assets) {
-            if (bars.length > 0) {
+            if (bars.length > 0) {    // Check if broker has bars (trading activity) within the requested timeframe
               var start = bars[0]['time'];
               var end = bars[bars.length-1]['time'];
               var margins = [];
               var values = [];
               var dates = [];
               var assetBars = [];
-              bars.forEach(function(bar, index) {
+              bars.forEach(function(bar, index) { // Loop through all broker bars
                 var time = bar['time'];
                 var close = parseFloat(bar['c']);
                 var margin = 0;
                 var value = 0;
                 var assetBar = {};
-                assets.forEach(function(rangeAsset, index) {
+                assets.forEach(function(rangeAsset, index) {  // Loop through assets and combine amounts with the broker bar prices to get value at each bar
                   var date = rangeAsset.get('createdAt');
                   var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));
                   var amount = parseFloat(rangeAsset.get('amount'));
@@ -284,8 +284,9 @@ Parse.Cloud.define('asset_bars', function(request, response) {
                 // };
                 var change = 0;
                 if (margin > 0) {
-                  change = parseFloat(((value - margin) / margin) * 100);
+                  change = parseFloat(((value - margin) / margin) * 100); // Calculate % change
                 };
+                // Build Keza modified "bars" for returning to client
                 assetBar['margin'] = parseFloat(margin.toFixed(8));
                 assetBar['value'] = parseFloat(value.toFixed(8));
                 assetBar['time'] = time;
@@ -300,10 +301,10 @@ Parse.Cloud.define('asset_bars', function(request, response) {
                 'assetBars' : assetBars,
                 'symbol' : symbol
               });
-            } else {
+            } else {    // If there are no broker bars in the requested time frame (ex. for day range on sunday for example)
               var getQuoteURL = 'https://1broker.com/api/v1/market/quotes.php?symbols='+symbol+'&token='+brokerToken;
-              Parse.Cloud.httpRequest({
-                url: getQuoteURL,
+              Parse.Cloud.httpRequest({   // Get latest quote for given symbol, so we can always return at least one bar with latest value
+                url: getQuoteURL,         // This is critical for combining historic data bars of all the assets later (currently done on client side...)
                 success: function (getQuoteResponse) {
                   var quotes = getQuoteResponse.data.response;
                   var quote = quotes[0];
@@ -315,7 +316,7 @@ Parse.Cloud.define('asset_bars', function(request, response) {
                   var value = 0;
                   var assetBars = [];
                   var assetBar = {};
-                  assets.forEach(function(rangeAsset, index) {
+                  assets.forEach(function(rangeAsset, index) {    // Same process as above, just only done once
                     var date = rangeAsset.get('createdAt');
                     var utc1970 = parseInt((date.getTime()).toString().slice(0,-3));
                     var amount = parseFloat(rangeAsset.get('amount'));
@@ -359,7 +360,7 @@ Parse.Cloud.define('asset_bars', function(request, response) {
         response.error('error: ' + error.message);
       }
     });
-  } else {
+  } else {  // If requested symbol is BTCJ, pass through to the special BTCJ function
     Parse.Cloud.run("btcj_asset_bars", request.params, {
       success: function (jamBars) {
         response.success(jamBars);
@@ -371,6 +372,7 @@ Parse.Cloud.define('asset_bars', function(request, response) {
 });
 
 //  Called by block.io (webhook) to indicate a new/updated transaction at any of our user deposit addresses
+//  This ones a bit of a monster. It handles a few entirely different incomming tasks
 Parse.Cloud.define('tx_hook', function(request, response) {
   Parse.Cloud.useMasterKey();
   var transactionData = request.params;
@@ -388,14 +390,14 @@ Parse.Cloud.define('tx_hook', function(request, response) {
     var TransactionClass = Parse.Object.extend('Transaction');
     var transactionQuery = new Parse.Query(TransactionClass);
     transactionQuery.equalTo('transactionId', transactionId);
-    transactionQuery.find({
+    transactionQuery.find({ // Query to see if this transaction exists already
       success: function (transactions) {
-        if(transactions.length === 0) {
+        if(transactions.length === 0) { // If not, make a new one
           var UserClass = Parse.Object.extend(Parse.User);
           var userQuery = new Parse.Query(UserClass);
           userQuery.equalTo('address', address);
           userQuery.first({
-            success: function (user) {
+            success: function (user) {  // If transaction address belongs to a user, attach user to new transaction
               var transaction = new TransactionClass();
               if (user) {
                 transaction.set('user', user);
@@ -430,7 +432,7 @@ Parse.Cloud.define('tx_hook', function(request, response) {
               response.success('saved new transaction (without user): '+transactionId);
             }
           });
-        } else {
+        } else {  // Okay this transaction already exists, must just have another confirmation, update it!
           var transaction = transactions[0];
           transaction.set('amountReceived', parseFloat(amountReceived));
           transaction.set('amountSent', parseFloat(amountSent));
@@ -438,7 +440,7 @@ Parse.Cloud.define('tx_hook', function(request, response) {
           transaction.set('confirmations', confirmations);
           transaction.set('address', address);
           var complete = transaction.get('complete');
-          if (balanceChange > 0) {
+          if (balanceChange > 0) {  // If balanceChange is positive, it's a deposit from a user. Make them new assets accordingly
             if (confirmations == 3 && complete == false) {
               var UserClass = Parse.Object.extend(Parse.User);
               var userQuery = new Parse.Query(UserClass);
@@ -460,7 +462,7 @@ Parse.Cloud.define('tx_hook', function(request, response) {
                     asset.set('inTransaction', transaction);
                     assets.push(asset);
                   });
-                  Parse.Object.saveAll(assets, {
+                  Parse.Object.saveAll(assets, {  // Save new assets, mark transaction complete and set (temporary) prices on the assets right away
                     success: function (savedAssets) {
                       transaction.set('complete', true);
                       transaction.set('user', user);
@@ -484,43 +486,9 @@ Parse.Cloud.define('tx_hook', function(request, response) {
             } else {
               response.success('updated transaction: '+transactionId);
             };
-          } else {
-            if (confirmations == 3 && !complete) {
+          } else {  // This was an outgoing transaction, likely to the broker or bitfininex. Could also possibly be a withdrawal to a user now.. so good thing we don't do anything lol
+            if (confirmations == 3 && !complete) {  // Seperate periodic jobs now perform the ordering of broker assets
               response.success('forward transaction complete');
-              // var AssetClass = Parse.Object.extend('Asset');
-              // var assetQuery = new Parse.Query(AssetClass);
-              // assetQuery.equalTo('outTransaction', transaction);
-              // assetQuery.find({
-              //   success: function(assets) {
-              //     var firstAsset = assets[0];
-              //     var symbol = firstAsset.get('symbol');
-              //     if (symbol != 'BTCJ') {
-              //       console.log('broker transaction is: ' + transaction.id + ', amount: ' + balanceChange);
-              //       transaction.set('complete', true);
-              //       transaction.save();
-              //       Parse.Cloud.run("place_orders", {}, {
-              //         success: function (result) {
-              //           assets.forEach(function(asset, index) {
-              //             asset.set(complete, true);
-              //           });
-              //           Parse.Object.saveAll(assets, {
-              //             success: function (savedAssets) {
-              //               response.success('orders placed, assets completed: '+ assets.length);
-              //             }, error: function(error) {
-              //               response.success('ummm placed orders but assets save failed');
-              //             }
-              //           });
-              //         }, error: function (error) {
-              //           response.error(error);
-              //         }
-              //       });
-              //     } else {
-              //       response.success('tx symbol is btcj');
-              //     }
-              //   }, error: function (error) {
-              //     response.error('error querying assets: '+error.code+' '+error.message);
-              //   }
-              // });
             } else {
               response.success('updated forward transaction');
             };
@@ -536,7 +504,7 @@ Parse.Cloud.define('tx_hook', function(request, response) {
   };
 });
 
-Parse.Cloud.afterSave('Transaction', function(request) {
+Parse.Cloud.afterSave('Transaction', function(request) {    // We want to create/update an Event and Push Notify the user for deposit transactions.
   Parse.Cloud.useMasterKey();
   var transaction = request.object;
   if (transaction.get('user')) {
@@ -584,7 +552,7 @@ Parse.Cloud.afterSave('Transaction', function(request) {
               userQuery.equalTo('objectId', user.id);
               var pushQuery = new Parse.Query(Parse.Installation);
               pushQuery.matchesQuery('user', userQuery);
-              Parse.Push.send({
+              Parse.Push.send({ // Parse APNS Push. It's almost too easy.....
                 where: pushQuery,
                 data: {
                   alert : {
@@ -613,6 +581,7 @@ Parse.Cloud.afterSave('Transaction', function(request) {
   }
 });
 
+// Test for push send. 'Nuff said. Not actually used anymore...
 Parse.Cloud.define('test_push', function(request, response) {
   var userQuery = new Parse.Query(Parse.User);
   userQuery.equalTo('objectId', 'qT6DdHYgrA');
