@@ -241,7 +241,7 @@ Parse.Cloud.define('asset_bars', function(request, response) {
   var from = request.params['from'];
   var to = request.params['to'];
   var resolution = request.params['resolution'];
-  if (symbol != 'BTCJ') {
+  if (symbol != 'BTCJ') { // Start by getting historic symbol data from broker to use as template
     var getBarsURL = 'https://1broker.com/api/v1/market/get_bars.php?symbol='+symbol+'&from='+from+'&to='+to+'&resolution='+resolution+'&token='+brokerToken;
     Parse.Cloud.httpRequest({
       url: getBarsURL,
@@ -251,7 +251,7 @@ Parse.Cloud.define('asset_bars', function(request, response) {
         var assetsQuery = new Parse.Query(AssetClass);
         assetsQuery.equalTo('user', user);
         assetsQuery.equalTo('symbol', symbol);
-        assetsQuery.find({
+        assetsQuery.find({  // Get all assets of given symbol
           success: function (assets) {
             if (bars.length > 0) {
               var start = bars[0]['time'];
