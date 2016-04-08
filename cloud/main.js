@@ -2074,3 +2074,152 @@ Parse.Cloud.define('bfx_history', function(request, response) {
     }
   });
 });
+
+
+
+// Welcome to the new fancier JavaScript.
+// 2016 Stefan Britton
+
+
+//  YASS format all the things
+var toBitcoin = function (value) {
+    return Math.round(100000000 * value) / 100000000;
+}
+var toPercent = function (value) {
+    return Math.round(100 * value) / 100;
+}
+
+/// Mmmmm here be tasty objects. Represent our core calculations and logic.
+
+var Position = function (symbol, margin, leverage, openPrice, time) {
+    this._symbol = symbol;
+    this._margin = margin;
+    this._leverage = leverage;
+    this._openPrice = openPrice;
+    this._time = time;
+};
+Position.prototype.cProfit = function (price) {
+    return toBitcoin((price - this._openPrice) * ((this._margin * this._leverage) / this._openPrice));
+};
+Position.prototype.cValue = function (price) {
+    return toBitcoin(this._margin + this.cProfit(price));
+};
+Position.prototype.cChange = function (price) {
+  return toPercent((this.cProfit(price) / this._margin) * 100)
+}
+Position.prototype.chart = function (history) {
+  var bars = [];
+  var that = this;
+  history.forEach(function (bar, index) {
+    if (bar['time'] >= that._time) {
+      bars.push({
+        'profit' : that.cProfit(bar['price']),
+        'value' : that.cValue(bar['price']),
+        'change' : that.cChange(bar['price']),
+        'time' : bar['time'],
+      });
+    } else {
+      bars.push({
+        'profit' : 0.0,
+        'value' : 0.0,
+        'change' : 0.0,
+        'time' : bar['time'],
+      });
+    };
+  });
+  return bars;
+};
+
+var Portfolio = function (positions) {
+  this._positions = positions;
+};
+Portfolio.prototype.cMargin = function () {
+  var margin = 0;
+  this._positions.forEach(function (position, index) {
+    margin += position._margin;
+  });
+  return toBitcoin(margin);
+};
+Portfolio.prototype.cProfit = function (prices) {
+  var profit = 0;
+  this._positions.forEach(function (position, index) {
+    profit += position.cProfit(prices[position._symbol]);
+  });
+  return toBitcoin(profit);
+};
+Portfolio.prototype.cValue = function (prices) {
+  var value = 0;
+  this._positions.forEach(function (position, index) {
+    value += position.cValue(prices[position._symbol]);
+  });
+  return toBitcoin(value);
+};
+Portfolio.prototype.cChange = function (prices) {
+  return toPercent((this.cProfit(prices) / this.cMargin()) * 100);
+}
+Portfolio.prototype.chart = function (history) {
+  var charts = [];
+  var tempChart = [];
+  this._positions.forEach(function (position, index) {  // Get charts and longest chart
+    var positionChart = position.chart(history[position._symbol]);
+    charts.push(positionChart);
+    if (positionChart.length > tempChart.length) { tempChart = positionChart; };
+  });
+  var finalChart = [];
+  tempChart.forEach(function (tempBar, tempIndex) {
+    var value = 0;
+    charts.forEach(function (chart, chartIndex) {
+      var matchIndex = -1;
+      chart.forEach(function (bar, barIndex) {
+        if (parseInt(bar['time']) == parseInt(tempBar['time'])) {
+          value += parseFloat(bar['value']);
+          matchIndex = barIndex;
+        };
+      });
+      if (matchIndex < 0) { // If not exact match, use latest avaialble bar
+        chart.reverse().forEach(function (bar, barIndex) {
+          if (parseInt(bar['time']) <= parseInt(tempBar['time']) && matchIndex < 0) {
+            value += parseFloat(bar['value']);
+            matchIndex = barIndex;
+          };
+        });
+        if (matchIndex < 0) { // If still no match... use first bar? or margin if firstbar too new?
+          var firstBar = chart[0];
+          value += parseFloat(firstBar['value']);
+          matchIndex = 0;
+        };
+      };
+    });
+    finalChart.push(toBitcoin(value));
+  });
+  return finalChart;
+}
+
+//  Let's try them out!
+Parse.Cloud.define('test_object', function (request, response) {
+  var fakeHistory = {
+    'SP500' : [
+      {'price' : 872.0, 'time' : 0},
+      {'price' : 874.0, 'time' : 1},
+      {'price' : 874.0, 'time' : 2},
+      {'price' : 874.0, 'time' : 3},
+      {'price' : 874.0, 'time' : 4}
+    ],
+    'EU50' : [
+      // {'price' : 2100.0, 'time' : 0},
+      {'price' : 2150.0, 'time' : 1},
+      {'price' : 2100.0, 'time' : 2},
+      {'price' : 2200.0, 'time' : 3},
+      {'price' : 2200.0, 'time' : 4}
+    ]
+  };
+
+  var sp500 = new Position('SP500', 5.0, 1.0, 874.0, 0);
+  var eu50 = new Position("EU50", 2.0, 1.0, 2150.0, 0);
+
+  var portfolio = new Portfolio([sp500, eu50]);
+
+  response.success({
+    'charts' : portfolio.chart(fakeHistory),
+  });
+});
